@@ -1,7 +1,7 @@
 # uirelays
 
 Native Nim UI library based on the idea of "relays" -- dependency injection
-via global callbacks. Has Windows API, X11, Cocoa, GTK4, SDL2 and SDL3
+via global callbacks. Has Windows API, X11, Cocoa, GTK4, SDL2, SDL3 and FigDraw
 support. Write UI apps as easily as terminal apps!
 
 ![SynEdit Demo](screenshots/synedit_demo.png)
@@ -11,7 +11,7 @@ support. Write UI apps as easily as terminal apps!
 `import uirelays` is all you need -- it re-exports everything and
 automatically initializes the native backend for the current platform
 (WinAPI on Windows, Cocoa on macOS, X11 on Linux/BSD). Override with
-`-d:sdl3`, `-d:sdl2`, or `-d:gtk4`.
+`-d:sdl3`, `-d:sdl2`, `-d:gtk4`, or a FigDraw Nimble feature.
 
 For finer control, import the submodules directly and call `initBackend()`
 yourself:
@@ -35,6 +35,23 @@ Backend selection:
 - Default on macOS: Cocoa
 - Default on Linux/BSD: X11
 - Optional overrides: `-d:gtk4`, `-d:sdl3`, `-d:sdl2`
+- Optional features: `figDrawWindy` and `figDrawSiwin`
+
+### FigDraw backend
+
+Choose either the Windy or siwin integration. The features are mutually
+exclusive and install only the selected windowing dependency:
+
+```sh
+atlas install --feature:uirelays.figDrawWindy
+nim c --define:"feature.uirelays.figDrawWindy" examples/hello.nim
+
+atlas install --feature:uirelays.figDrawSiwin
+nim c --define:"feature.uirelays.figDrawSiwin" examples/hello.nim
+```
+
+The matching `-d:figDrawWindy` and `-d:figDrawSiwin` convenience aliases are
+also accepted once their dependencies are available.
 
 ### Nim Packages For SDL Backends
 
@@ -155,6 +172,8 @@ Force a specific backend:
 nim c -d:gtk4 examples/hello.nim
 nim c -d:sdl3 examples/hello.nim
 nim c -d:sdl2 examples/hello.nim
+nim c --define:"feature.uirelays.figDrawWindy" examples/hello.nim
+nim c --define:"feature.uirelays.figDrawSiwin" examples/hello.nim
 ```
 
 ## Examples
@@ -192,6 +211,8 @@ allocation -- just plain proc pointers.
 | `gtk4_driver` | Linux/BSD | GTK4, Cairo, Pango |
 | `sdl3_driver` | Cross-platform | SDL3, SDL3_ttf |
 | `sdl2_driver` | Cross-platform | SDL2, SDL2_ttf |
+| `figdraw_windy_driver` | Cross-platform | FigDraw, Windy |
+| `figdraw_siwin_driver` | Cross-platform | FigDraw, siwin |
 
 See [Writing a custom driver](doc/drivers.md) for a guide on
 adding support for a new platform or graphics toolkit.

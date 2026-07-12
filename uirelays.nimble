@@ -10,3 +10,6 @@ srcDir        = "src"
 # Dependencies
 
 requires "nim >= 2.0.0"
+
+feature "figdraw":
+  requires "figdraw >= 0.28.1"

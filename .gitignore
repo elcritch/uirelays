@@ -3,3 +3,6 @@ nimblecache/
 htmldocs/
 /deps
 nim.cfg
+nimble.develop
+nimble.paths
+nimbledeps

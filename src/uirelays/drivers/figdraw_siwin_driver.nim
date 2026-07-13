@@ -345,7 +345,7 @@ proc replayImage(ctx: BackendContext; op: DrawOp) =
   )
 
 proc renderQueuedOps() =
-  if appWindow.isNil or renderer.isNil:
+  if appWindow.isNil or appWindow.closed or renderer.isNil:
     return
   renderer.beginFrame()
   let frameSize = appWindow.logicalSize()
@@ -468,9 +468,11 @@ proc figCreateWindow(layout: var ScreenLayout) =
   layout.scaleY = currentScale().round().int
 
 proc figRefresh() =
+  if appWindow.isNil or appWindow.closed:
+    drawOps.setLen(0)
+    return
   renderQueuedOps()
-  if not appWindow.isNil:
-    appWindow.redraw()
+  appWindow.redraw()
 
 proc figSaveState() =
   stateStack.add currentState
@@ -571,7 +573,7 @@ proc figDrawImage(img: screen.Image; src, dst: coords.Rect) =
   drawOps.add DrawOp(kind: dopImage, state: currentState, image: img, src: src, dst: dst)
 
 proc figSetCursor(c: screen.CursorKind) =
-  if appWindow.isNil:
+  if appWindow.isNil or appWindow.closed:
     return
   appWindow.cursor = Cursor(kind: siwin.CursorKind.builtin, builtin: case c
     of curDefault, curArrow: BuiltinCursor.arrow
@@ -583,7 +585,7 @@ proc figSetCursor(c: screen.CursorKind) =
     of curSizeWE: BuiltinCursor.sizeHorizontal)
 
 proc figSetWindowTitle(title: string) =
-  if not appWindow.isNil:
+  if not appWindow.isNil and appWindow.opened:
     appWindow.title = title
 
 proc figGetClipboardText(): string =
@@ -595,7 +597,7 @@ proc figPutClipboardText(text: string) =
     appWindow.clipboard.text = text
 
 proc pumpWindowStep() =
-  if not appWindow.isNil:
+  if not appWindow.isNil and appWindow.opened:
     appWindow.step()
 
 proc figPollEvent(e: var input.Event; flags: set[InputFlag]): bool =
@@ -629,8 +631,19 @@ proc figDelay(ms: int) =
   os.sleep(ms)
 
 proc figShutdown() =
-  if not appWindow.isNil:
+  if not appWindow.isNil and appWindow.opened:
     close(appWindow)
+  appWindow = nil
+  renderer = nil
+  eventQueue.clear()
+  drawOps.setLen(0)
+  stateStack.setLen(0)
+  currentState = DrawState()
+  fontSlots.setLen(0)
+  images.setLen(0)
+  typefaceIdsByPath.clear()
+  siwinInitialized = false
+  frameStarted = false
 
 proc initFigDrawSiwinDriver*() =
   windowRelays = WindowRelays(
@@ -668,4 +681,3 @@ proc initFigDrawSiwinDriver*() =
     getText: figGetClipboardText,
     putText: figPutClipboardText,
   )
-

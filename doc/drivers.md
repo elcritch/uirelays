@@ -145,6 +145,10 @@ elif defined(myplatform):
 Or users can bypass the backend module entirely and call
 `initMyDriver()` directly after importing your driver.
 
+Optional Nimble backends should be gated by their generated feature define,
+for example `defined(feature.uirelays.figDrawWindy)`. This keeps their dependencies
+out of default platform builds.
+
 ## Checklist
 
 - [ ] Implement all 5 relay groups (or leave unneeded ones at defaults)

@@ -4,7 +4,7 @@ Native Nim UI library based on the idea of "relays" -- dependency injection
 via global callbacks. Has Windows API, X11, Cocoa, GTK4, SDL2, SDL3 and FigDraw
 support. Write UI apps as easily as terminal apps!
 
-![SynEdit Demo](screenshots/synedit_demo.png)
+![focim](screenshots/synedit_demo.png)
 
 ## Getting started
 
@@ -176,12 +176,27 @@ nim c --define:"feature.uirelays.figDrawWindy" examples/hello.nim
 nim c --define:"feature.uirelays.figDrawSiwin" examples/hello.nim
 ```
 
+## Apps
+
+- [focim.nim](apps/focim.nim) -- the Focussed Nim Editor: code editor with
+  integrated terminal, laid out and colored by an editable
+  [config file](doc/config.md)
+
+```sh
+nim c apps/focim.nim
+```
+
+Or download a build: nightly binaries for Linux (x86_64 and ARM64), macOS
+(ARM64) and Windows (x86_64) are published to
+[Releases](https://github.com/nim-lang/uirelays/releases) by
+[`nightly.yml`](.github/workflows/nightly.yml), one release per commit. On
+Linux they need `libX11.so.6` and `libXft.so.2` at runtime; nothing else.
+
 ## Examples
 
-- [editor.nim](examples/editor.nim) -- Code editor with integrated terminal
 - [hello.nim](examples/hello.nim) -- Minimal window with text rendering
 - [paint.nim](examples/paint.nim) -- Simple drawing app with explicit submodule imports
-- [layout_demo.nim](examples/layout_demo.nim) -- Markdown table layout system demo
+- [layout_demo.nim](examples/layout_demo.nim) -- NIF layout system demo
 - [todo.nim](examples/todo.nim) -- Todo list app
 
 ## Architecture
@@ -216,6 +231,29 @@ allocation -- just plain proc pointers.
 
 See [Writing a custom driver](doc/drivers.md) for a guide on
 adding support for a new platform or graphics toolkit.
+
+## Layout and theme
+
+A window is described in [NIF](doc/config.md) -- where its widgets go and what
+they look like -- read by the dependency-free lexer in `uirelays/tinynif`:
+
+```
+(config
+  (layout
+    (toolbar (lines 2))
+    (cols
+      (sidebar (px 250))
+      (editor))
+    (status (lines 1)))
+  (theme
+    (bg "#15171B")
+    (fg "#E6DFD1"
+      (Keyword "#E5B94E"))))
+```
+
+`resolve` turns the layout into a `Rect` per name, and every field of `Theme`
+can be set -- except a color combination nobody could read, which is refused
+with a note rather than applied. See [The config file](doc/config.md).
 
 ## License
 

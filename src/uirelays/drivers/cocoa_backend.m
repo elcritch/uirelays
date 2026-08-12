@@ -216,6 +216,40 @@ static int translateKeyCode(unsigned short kc) {
   }
 }
 
+static int translateKeyEvent(NSEvent *event) {
+  /* A keyCode is a physical position on the keyboard and the layout decides
+     what that position types. The table above is ANSI, so on a German
+     keyboard it gets Y and Z backwards -- 0x06 types 'y' there and 0x10 types
+     'z' -- which puts undo on the key labelled Y and redo on the one labelled
+     Z. Punctuation moves too: '-' is 0x2C and '+' is 0x1E, so Cmd+plus and
+     Cmd+minus land on neither.
+
+     So anything that produces a character is identified by the character the
+     current layout actually gives, and only the keys that produce none
+     (arrows, F-keys, Home/End, ...) stay a lookup by position.
+     charactersIgnoringModifiers drops every modifier but Shift, so Ctrl+Z
+     still reports a plain "z" rather than a control code. */
+  NSString *chars = [event charactersIgnoringModifiers];
+  if (chars.length == 1) {
+    unichar c = [chars characterAtIndex:0];
+    if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+    if (c >= 'a' && c <= 'z') return 1 + (c - 'a');           /* keyA..keyZ */
+    if (c == '0') return 27;                                  /* key0 */
+    if (c >= '1' && c <= '9') return 28 + (c - '1');          /* key1..key9 */
+    switch (c) {
+      case ',': return 65;  /* keyComma */
+      case '.': return 66;  /* keyPeriod */
+      case '/': return 67;  /* keySlash */
+      case '-': return 68;  /* keyMinus */
+      case '=': return 69;  /* keyEqual */
+      case '+': return 70;  /* keyPlus */
+    }
+    /* Shifted digits ('!' for 1) and everything else fall through to the
+       position, which is what the apps that bind digits expect. */
+  }
+  return translateKeyCode(event.keyCode);
+}
+
 /* ---- Font management -------------------------------------------------- */
 
 #define MAX_FONTS 64
@@ -230,13 +264,29 @@ static int fontCount = 0;
 
 int cocoa_openFont(const char *path, int size,
                    int *outAscent, int *outDescent, int *outLineHeight) {
-  if (fontCount >= MAX_FONTS) return 0;
+  /* Take a slot that cocoa_closeFont freed before growing the table. Without
+     the reuse this is append-only and MAX_FONTS is a lifetime budget, not a
+     concurrent one: focim keeps one font per logical size and closes and
+     reopens the whole cache every time the window moves to a display of
+     another density, so a few drags between monitors would exhaust the table
+     and openFont would start handing back 0 -- i.e. no text at all. */
+  int idx = -1;
+  for (int i = 0; i < fontCount; i++)
+    if (!fonts[i].font) { idx = i; break; }
+  if (idx < 0 && fontCount >= MAX_FONTS) return 0;
 
   CTFontRef ctFont = NULL;
 
   if (path[0] == '\0') {
-    /* Empty path = platform default (system) font */
-    ctFont = CTFontCreateUIFontForLanguage(kCTFontUIFontSystem, (CGFloat)size, NULL);
+    /* Empty path = platform default font, and every other driver reads that
+       as "monospaced" (Consolas on Windows, fontconfig's `monospace` on X11).
+       kCTFontUIFontSystem would hand back San Francisco, which is
+       proportional -- so ask for the fixed-pitch UI font instead; it resolves
+       to Menlo. Do NOT reach for "SF Mono" by name: CTFontCreateWithName
+       falls back to Helvetica without an error when a name is unknown, and SF
+       Mono is not name-accessible on a stock system. */
+    ctFont = CTFontCreateUIFontForLanguage(kCTFontUIFontUserFixedPitch,
+                                           (CGFloat)size, NULL);
   } else {
     /* Create font from file path */
     CFStringRef cfPath = CFStringCreateWithCString(NULL, path, kCFStringEncodingUTF8);
@@ -260,7 +310,8 @@ int cocoa_openFont(const char *path, int size,
 
   if (!ctFont) return 0;
 
-  int idx = fontCount++;
+  if (idx < 0) idx = fontCount++;  /* fontCount stays the high-water mark, so
+                                      the `idx < fontCount` guards below hold */
   fonts[idx].font = ctFont;
   fonts[idx].ascent = (int)ceil(CTFontGetAscent(ctFont));
   fonts[idx].descent = (int)ceil(CTFontGetDescent(ctFont));
@@ -608,7 +659,7 @@ void cocoa_delay(uint32_t ms) {
 - (void)keyDown:(NSEvent *)event {
   NEEvent e = {0};
   e.kind = NE_KEY_DOWN;
-  e.key = translateKeyCode(event.keyCode);
+  e.key = translateKeyEvent(event);
   e.mods = translateModifiers(event.modifierFlags);
   pushEvent(e);
 
@@ -651,7 +702,7 @@ void cocoa_delay(uint32_t ms) {
 - (void)keyUp:(NSEvent *)event {
   NEEvent e = {0};
   e.kind = NE_KEY_UP;
-  e.key = translateKeyCode(event.keyCode);
+  e.key = translateKeyEvent(event);
   e.mods = translateModifiers(event.modifierFlags);
   pushEvent(e);
 }
@@ -876,6 +927,18 @@ static int currentButtons(NSEvent *event) {
   pushEvent(e);
 }
 
+- (void)requestQuit:(id)sender {
+  /* The app menu's Quit item lands here instead of on NSApp's terminate:,
+     which would kill the process from inside the menu's own event handling --
+     the app would never see the keystroke and never get to run its shutdown
+     path. Queueing NE_QUIT lets Cmd+Q reach the app like every other Cmd
+     combination, and matches what windowShouldClose: above already does for
+     the close button. */
+  NEEvent e = {0};
+  e.kind = NE_QUIT;
+  pushEvent(e);
+}
+
 @end
 
 /* ---- Window management ------------------------------------------------ */
@@ -895,6 +958,9 @@ void cocoa_createWindow(int w, int h, int *outW, int *outH,
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
 
+    /* The delegate is created up front: the Quit menu item below targets it. */
+    winDelegate = [[NimEditWindowDelegate alloc] init];
+
     /* Create menu bar (minimal: just app menu with Quit) */
     NSMenu *menubar = [[NSMenu alloc] init];
     NSMenuItem *appMenuItem = [[NSMenuItem alloc] init];
@@ -904,8 +970,9 @@ void cocoa_createWindow(int w, int h, int *outW, int *outH,
     NSMenu *appMenu = [[NSMenu alloc] init];
     NSMenuItem *quitItem = [[NSMenuItem alloc]
       initWithTitle:@"Quit NimEdit"
-             action:@selector(terminate:)
+             action:@selector(requestQuit:)
       keyEquivalent:@"q"];
+    [quitItem setTarget:winDelegate];
     [appMenu addItem:quitItem];
     [appMenuItem setSubmenu:appMenu];
 
@@ -925,8 +992,7 @@ void cocoa_createWindow(int w, int h, int *outW, int *outH,
     [mainWindow setContentView:mainView];
     [mainWindow makeFirstResponder:mainView];
 
-    /* Window delegate */
-    winDelegate = [[NimEditWindowDelegate alloc] init];
+    /* Window delegate (already allocated above for the Quit menu item) */
     [mainWindow setDelegate:winDelegate];
 
     /* Show */

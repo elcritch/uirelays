@@ -4,6 +4,8 @@
 nimcache/
 nimblecache/
 htmldocs/
+.vscode/
+tests/tester
 /deps
 nim.cfg
 nimble.develop

@@ -105,7 +105,7 @@ proc cShutdown() {.importc: "cocoa_shutdown", cdecl.}
 
 # --- Relay implementations ---
 
-proc cocoaCreateWindow(layout: var ScreenLayout) =
+proc cocoaCreateWindow(layout: var ScreenLayout; icon: pointer; iconLen: int) =
   var w, h, sx, sy: cint
   cCreateWindow(layout.width.cint, layout.height.cint,
                 addr w, addr h, addr sx, addr sy)

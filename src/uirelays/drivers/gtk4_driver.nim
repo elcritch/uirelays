@@ -22,7 +22,7 @@ static inline FcPattern *nimedit_fc_font_match(FcPattern *p, void *result_out) {
 }
 """.}
 
-import std/unicode
+import std/[unicode, os, strutils]
 import ../coords, ../input, ../screen
 
 const
@@ -61,6 +61,7 @@ type
   gint = cint
   gulong = culong
   gdouble = cdouble
+  GType = csize_t
   GCallback = pointer
   GConnectFlags = cint
 
@@ -96,12 +97,17 @@ proc g_error_free(err: ptr GError) {.importc, nodecl, cdecl.}
 proc g_free(p: pointer) {.importc, nodecl, cdecl.}
 proc g_get_monotonic_time(): int64 {.importc, nodecl, cdecl.}
 proc g_usleep(micros: culong) {.importc, nodecl, cdecl.}
+proc g_set_prgname(name: cstring) {.importc, nodecl, cdecl.}
+proc g_get_prgname(): cstring {.importc, nodecl, cdecl.}
+proc g_type_from_name(name: cstring): GType {.importc, nodecl, cdecl.}
+proc g_type_check_instance_is_a(inst: pointer; t: GType): gboolean {.importc, nodecl, cdecl.}
 
 proc g_main_context_iteration(ctx: pointer; mayBlock: gboolean): gboolean {.importc, nodecl, cdecl.}
 
 proc gtk_init_check(): gboolean {.importc, nodecl, cdecl.}
 proc gtk_window_new(): pointer {.importc, nodecl, cdecl.}
 proc gtk_window_set_title(win: pointer; title: cstring) {.importc, nodecl, cdecl.}
+proc gtk_window_set_icon_name(win: pointer; name: cstring) {.importc, nodecl, cdecl.}
 proc gtk_window_set_default_size(win: pointer; w, h: gint) {.importc, nodecl, cdecl.}
 proc gtk_window_set_child(win: pointer; child: pointer) {.importc, nodecl, cdecl.}
 proc gtk_window_destroy(win: pointer) {.importc, nodecl, cdecl.}
@@ -147,6 +153,7 @@ proc gtk_im_context_focus_in(im: pointer) {.importc, nodecl, cdecl.}
 proc gdk_event_get_modifier_state(ev: pointer): guint {.importc, nodecl, cdecl.}
 proc gdk_keyval_to_lower(k: guint): guint {.importc, nodecl, cdecl.}
 proc gdk_cursor_new_from_name(name: cstring; fallback: pointer): pointer {.importc, nodecl, cdecl.}
+proc gdk_x11_display_set_program_class(disp: pointer; name: cstring) {.importc, nodecl, cdecl.}
 proc gdk_display_get_default(): pointer {.importc, nodecl, cdecl.}
 proc gdk_display_get_clipboard(disp: pointer): pointer {.importc, nodecl, cdecl.}
 proc gdk_clipboard_set_text(clip: pointer; text: cstring) {.importc, nodecl, cdecl.}
@@ -491,7 +498,7 @@ proc readClipboardSync(): string =
 
 # --- Screen hooks ---
 
-proc gtkCreateWindow(layout: var ScreenLayout) =
+proc gtkCreateWindow(layout: var ScreenLayout; icon: pointer; iconLen: int) =
   if win != nil:
     let da = cast[ptr GtkDrawingArea](drawingArea)
     layout.width = max(1, gtk_drawing_area_get_content_width(da).int)
@@ -500,7 +507,27 @@ proc gtkCreateWindow(layout: var ScreenLayout) =
   if gtk_init_check() == G_FALSE:
     quit("GTK4 init failed")
   win = gtk_window_new()
-  gtk_window_set_title(win, "NimEdit")
+  # Who this window belongs to: the name of the executable, which is what a
+  # `.desktop` file's StartupWMClass matches and what GTK then looks the icon
+  # up by in the icon theme. Not the title -- that changes while it runs.
+  var instName = getAppFilename().extractFilename.changeFileExt("")
+  var className = instName
+  if className.len > 0: className[0] = className[0].toUpperAscii
+  g_set_prgname(instName.cstring)
+  # X11 only: the class half of WM_CLASS. GTK4 would otherwise take it from
+  # RESOURCE_NAME when that is set, so say it outright. Wayland has no such
+  # property -- there the app id is the prgname above. The type check keeps
+  # this off a Wayland display, where the cast inside GTK would be a critical;
+  # an unregistered type name yields 0, which matches nothing.
+  let disp = gdk_display_get_default()
+  if disp != nil and
+      g_type_check_instance_is_a(disp, g_type_from_name("GdkX11Display")) == G_TRUE:
+    gdk_x11_display_set_program_class(disp, className.cstring)
+  gtk_window_set_title(win, instName.cstring)
+  # GTK takes the icon from the icon theme, by this name -- `icon` holds X11
+  # cardinals, which it has no use for. An installed `.desktop` entry and its
+  # hicolor PNGs are what put a picture there.
+  gtk_window_set_icon_name(win, instName.cstring)
   # A negative dimension is MaxWindowWidth/MaxWindowHeight: ask the window
   # manager to maximize, which leaves panels and docks visible (unlike
   # gtk_window_fullscreen). The default size is what unmaximizing returns to.

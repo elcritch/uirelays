@@ -57,6 +57,10 @@ type
     x, y: cshort
     width, height: cushort
 
+  XClassHint {.pure.} = object
+    res_name: cstring
+    res_class: cstring
+
   XColor {.pure, used.} = object
     pixel: culong
     red, green, blue: cushort
@@ -225,6 +229,7 @@ const
   CurrentTime = 0.XTime
   XA_ATOM = 4.Atom
   XA_STRING = 31.Atom
+  XA_CARDINAL = 6.Atom
   PropModeReplace = 0.cint
 
   # Event types
@@ -393,6 +398,8 @@ proc XPending(dpy: pointer): cint
 proc XFlush(dpy: pointer): cint
   {.cdecl, dynlib: libX11, importc.}
 proc XStoreName(dpy: pointer; w: XID; name: cstring): cint
+  {.cdecl, dynlib: libX11, importc.}
+proc XSetClassHint(dpy: pointer; w: XID; class_hints: ptr XClassHint): cint
   {.cdecl, dynlib: libX11, importc.}
 proc XInternAtom(dpy: pointer; name: cstring; onlyIfExists: XBool): Atom
   {.cdecl, dynlib: libX11, importc.}
@@ -753,7 +760,7 @@ proc computeUiScale(): int =
 
 # ---- Screen hook implementations ----
 
-proc x11CreateWindow(layout: var ScreenLayout) =
+proc x11CreateWindow(layout: var ScreenLayout; icon: pointer; iconLen: int) =
   gDisplay = XOpenDisplay(nil)
   if gDisplay == nil:
     quit("Cannot open X11 display")
@@ -794,7 +801,38 @@ proc x11CreateWindow(layout: var ScreenLayout) =
   gTargets = XInternAtom(gDisplay, "TARGETS", 0)
   gClipProperty = XInternAtom(gDisplay, "NIMEDIT_CLIP", 0)
 
-  discard XStoreName(gDisplay, gWindow, "NimEdit")
+  # WM_CLASS: who this window belongs to, which is what groups the windows of
+  # one application in a taskbar and what a `.desktop` file's StartupWMClass
+  # has to match. It is the name of the executable -- the convention every X11
+  # toolkit follows, and the one thing about the window that cannot change
+  # while it runs, unlike its title. Nothing configures it: the file that is
+  # running is a fact of the running program, so an installed entry that names
+  # it cannot be pointing at the wrong thing.
+  # Set before mapping: ICCCM has the window manager read it at that point.
+  var instName = getAppFilename().extractFilename.changeFileExt("")
+  var className = instName
+  if className.len > 0: className[0] = className[0].toUpperAscii
+  var classHint = XClassHint(res_name: cstr(instName),
+                             res_class: cstr(className))
+  discard XSetClassHint(gDisplay, gWindow, addr classHint)
+
+  # `_NET_WM_ICON`: the taskbar bitmap, for a window whose application has no
+  # installed entry to look one up in. Also before the map, so the window
+  # manager has it the first time it draws the window rather than a frame or
+  # two later. Xlib's format-32 `XChangeProperty` wants an array of `clong`
+  # (8 bytes each on LP64) with the value in the low 32 bits, so the packed
+  # `uint32` payload is expanded on the way in.
+  if icon != nil and iconLen > 0:
+    let iconAtom = XInternAtom(gDisplay, "_NET_WM_ICON", 0)
+    if iconAtom != 0:
+      let src = cast[ptr UncheckedArray[uint32]](icon)
+      var longs = newSeq[clong](iconLen)
+      for i in 0 ..< iconLen:
+        longs[i] = clong(src[i])
+      discard XChangeProperty(gDisplay, gWindow, iconAtom, XA_CARDINAL, 32,
+                              PropModeReplace, addr longs[0], iconLen.cint)
+
+  discard XStoreName(gDisplay, gWindow, instName.cstr)
   discard XMapWindow(gDisplay, gWindow)
 
   if maximized:

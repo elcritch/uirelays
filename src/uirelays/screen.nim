@@ -243,6 +243,15 @@ proc drawText*(f: Font; x, y: int; text: string; fg, bg: Color): TextExtent =
   fontRelays.drawText(f, x, y, text, fg, bg)
 
 proc fillRect*(r: Rect; color: Color) = drawRelays.fillRect(r, color)
+proc drawFrame*(r: Rect; color: Color; width = 1) =
+  ## An outline `width` pixels thick, drawn just inside `r`. Four `fillRect`s,
+  ## so it needs nothing of a driver that `fillRect` does not already need.
+  if r.w <= 0 or r.h <= 0 or width <= 0: return
+  let w = min(width, min(r.w, r.h))
+  fillRect(rect(r.x, r.y, r.w, w), color)
+  fillRect(rect(r.x, r.y + r.h - w, r.w, w), color)
+  fillRect(rect(r.x, r.y, w, r.h), color)
+  fillRect(rect(r.x + r.w - w, r.y, w, r.h), color)
 proc drawLine*(x1, y1, x2, y2: int; color: Color) =
   drawRelays.drawLine(x1, y1, x2, y2, color)
 proc drawPoint*(x, y: int; color: Color) = drawRelays.drawPoint(x, y, color)

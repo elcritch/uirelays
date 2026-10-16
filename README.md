@@ -128,6 +128,33 @@ SDL2 backend:
 sudo dnf install SDL2-devel SDL2_ttf-devel
 nimble install sdl2
 ```
+#### Arch
+
+Default X11 backend:
+
+```sh
+sudo pacman -S libx11 libxft
+```
+
+GTK4 backend:
+
+```sh
+sudo pacman -S gtk4 pango cairo fontconfig glib2 pkgconf
+```
+
+SDL3 backend:
+
+```sh
+sudo pacman -S sdl3 sdl3_ttf
+nimble install sdl3
+```
+
+SDL2 backend:
+
+```sh
+sudo pacman -S sdl2-compat sdl2_ttf
+nimble install sdl2
+```
 
 ### macOS
 

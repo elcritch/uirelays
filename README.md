@@ -62,8 +62,8 @@ The SDL backends need extra Nim packages in addition to the native system
 libraries:
 
 ```sh
-nimble install https://github.com/nim-lang/sdl3
-nimble install https://github.com/nim-lang/sdl2
+nimble install sdl3
+nimble install sdl2
 ```
 
 Install `sdl3` when building with `-d:sdl3`. Install `sdl2` when building

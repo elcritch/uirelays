@@ -62,8 +62,8 @@ The SDL backends need extra Nim packages in addition to the native system
 libraries:
 
 ```sh
-nimble install https://github.com/nim-lang/sdl3
-nimble install https://github.com/nim-lang/sdl2
+nimble install sdl3
+nimble install sdl2
 ```
 
 Install `sdl3` when building with `-d:sdl3`. Install `sdl2` when building
@@ -91,14 +91,14 @@ SDL3 backend:
 
 ```sh
 sudo apt install libsdl3-dev libsdl3-ttf-dev
-nimble install https://github.com/nim-lang/sdl3
+nimble install sdl3
 ```
 
 SDL2 backend:
 
 ```sh
 sudo apt install libsdl2-dev libsdl2-ttf-dev
-nimble install https://github.com/nim-lang/sdl2
+nimble install sdl2
 ```
 
 #### Fedora
@@ -119,14 +119,41 @@ SDL3 backend:
 
 ```sh
 sudo dnf install SDL3-devel SDL3_ttf-devel
-nimble install https://github.com/nim-lang/sdl3
+nimble install sdl3
 ```
 
 SDL2 backend:
 
 ```sh
 sudo dnf install SDL2-devel SDL2_ttf-devel
-nimble install https://github.com/nim-lang/sdl2
+nimble install sdl2
+```
+#### Arch
+
+Default X11 backend:
+
+```sh
+sudo pacman -S libx11 libxft
+```
+
+GTK4 backend:
+
+```sh
+sudo pacman -S gtk4 pango cairo fontconfig glib2 pkgconf
+```
+
+SDL3 backend:
+
+```sh
+sudo pacman -S sdl3 sdl3_ttf
+nimble install sdl3
+```
+
+SDL2 backend:
+
+```sh
+sudo pacman -S sdl2-compat sdl2_ttf
+nimble install sdl2
 ```
 
 ### macOS
@@ -141,8 +168,8 @@ For SDL backends on macOS, install the SDL libraries with your preferred
 package manager, then install the matching Nim package:
 
 ```sh
-nimble install https://github.com/nim-lang/sdl3
-nimble install https://github.com/nim-lang/sdl2
+nimble install sdl3
+nimble install sdl2
 ```
 
 ### Windows
@@ -157,8 +184,8 @@ For SDL backends on Windows, install the SDL native libraries separately
 and then install the matching Nim package:
 
 ```sh
-nimble install https://github.com/nim-lang/sdl3
-nimble install https://github.com/nim-lang/sdl2
+nimble sdl3
+nimble install sdl2
 ```
 
 ### Build Examples

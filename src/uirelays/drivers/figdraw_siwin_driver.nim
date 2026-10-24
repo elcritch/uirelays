@@ -646,35 +646,36 @@ proc figImageSize(img: screen.Image): tuple[w, h: int] =
   else: (slot.image.width, slot.image.height)
 
 proc queueRGBA(pixels: ptr UncheckedArray[uint32]; w, h, stride: int;
-               dst: coords.Rect): bool =
+               dst: coords.Rect; format: RGBAFormat): bool =
   if pixels == nil or w <= 0 or h <= 0 or dst.w <= 0 or dst.h <= 0:
     return false
   # Deferred replay owns a copy; the caller may reuse its buffer on return.
   var img = pixie.newImage(w, h)
-  var key = hash((w, h))
+  var key = hash((w, h, format))
   for y in 0 ..< h:
     for x in 0 ..< w:
       let p = pixels[y * stride + x]
       img.data[y * w + x] = rgbx(uint8((p shr 16) and 0xFF),
                                 uint8((p shr 8) and 0xFF),
-                                uint8(p and 0xFF), 255)
+                                uint8(p and 0xFF),
+                                if format == RGBAFormat.argbPremultiplied: uint8(p shr 24) else: 255'u8)
       key = key !& hash(p)
   drawOps.add DrawOp(kind: dopPixels, state: currentState,
                     pixels: img, pixelsKey: !$key, pixelsDst: dst)
   true
 
 proc figDrawRGBA(pixels: ptr UncheckedArray[uint32]; w, h: int;
-                 dst: coords.Rect): bool =
-  queueRGBA(pixels, w, h, w, dst)
+                 dst: coords.Rect; format: RGBAFormat): bool =
+  queueRGBA(pixels, w, h, w, dst, format)
 
 proc figBlitRGBA(pixels: ptr UncheckedArray[uint32]; w, h: int;
-                 dst: coords.Rect): bool =
+                 dst: coords.Rect; format: RGBAFormat): bool =
   if pixels == nil or w <= 0 or h <= 0 or dst.w <= 0 or dst.h <= 0:
     return false
   # Preserve blitRGBA's clipping-only contract, including the source stride.
   let cw = min(w, dst.w)
   let ch = min(h, dst.h)
-  queueRGBA(pixels, cw, ch, w, coords.rect(dst.x, dst.y, cw, ch))
+  queueRGBA(pixels, cw, ch, w, coords.rect(dst.x, dst.y, cw, ch), format)
 
 
 proc figSetCursor(c: screen.CursorKind) =

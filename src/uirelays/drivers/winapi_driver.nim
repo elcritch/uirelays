@@ -340,6 +340,15 @@ proc StretchDIBits(hdc: HDC; xDest, yDest, destW, destH: int32;
   {.stdcall, dynlib: "gdi32", importc.}
 proc SaveDC(hdc: HDC): int32
   {.stdcall, dynlib: "gdi32", importc.}
+type BlendFunction {.bycopy.} = object
+  operation, flags, alpha, format: uint8
+
+proc AlphaBlend(dst: HDC; x, y, w, h: int32; src: HDC;
+                sx, sy, sw, sh: int32; blend: BlendFunction): BOOL
+  {.stdcall, dynlib: "msimg32", importc.}
+proc CreateDIBSection(dc: HDC; info: ptr BITMAPINFO; usage: UINT;
+                      bits: ptr pointer; section: HANDLE; offset: DWORD): HBITMAP
+  {.stdcall, dynlib: "gdi32", importc.}
 proc RestoreDC(hdc: HDC; nSavedDC: int32): BOOL
   {.stdcall, dynlib: "gdi32", importc.}
 proc IntersectClipRect(hdc: HDC; left, top, right, bottom: int32): int32
@@ -754,7 +763,7 @@ proc winSetClipRect(r: coords.Rect) =
       r.x.int32, r.y.int32, (r.x + r.w).int32, (r.y + r.h).int32)
 
 proc winPutRGBA(pixels: ptr UncheckedArray[uint32]; w, h: int;
-                dst: coords.Rect; scaleImage: bool): bool =
+                dst: coords.Rect; scaleImage: bool; format: RGBAFormat): bool =
   ## This driver decodes no pictures, so it fills in none of the image
   ## relays. What it can do is take finished pixels from whoever does.
   if gBackDC == nil or pixels == nil: return false
@@ -769,6 +778,22 @@ proc winPutRGBA(pixels: ptr UncheckedArray[uint32]; w, h: int;
   bmi.bmiHeader.biPlanes = 1
   bmi.bmiHeader.biBitCount = 32
   bmi.bmiHeader.biCompression = BI_RGB
+  if format == RGBAFormat.argbPremultiplied:
+    let dc = CreateCompatibleDC(gBackDC)
+    if dc == nil: return false
+    defer: discard DeleteDC(dc)
+    var data: pointer
+    let bitmap = CreateDIBSection(dc, addr bmi, DIB_RGB_COLORS, addr data, nil, 0)
+    if bitmap == nil: return false
+    defer: discard DeleteObject(cast[HGDIOBJ](bitmap))
+    copyMem(data, pixels, w * h * 4)
+    let previous = SelectObject(dc, cast[HGDIOBJ](bitmap))
+    defer: discard SelectObject(dc, previous)
+    let drawW = if scaleImage: dst.w else: min(w, dst.w)
+    let drawH = if scaleImage: dst.h else: min(h, dst.h)
+    return AlphaBlend(gBackDC, dst.x.int32, dst.y.int32, drawW.int32, drawH.int32,
+      dc, 0, 0, (if scaleImage: w else: drawW).int32,
+      (if scaleImage: h else: drawH).int32, BlendFunction(alpha: 255, format: 1)) != 0
   # Blits clip a source-sized rectangle. Image draws map the full source
   # into the logical destination, using the same top-down DIB data.
   let drawW = if scaleImage: dst.w else: w
@@ -787,12 +812,12 @@ proc winPutRGBA(pixels: ptr UncheckedArray[uint32]; w, h: int;
   result = true
 
 proc winBlitRGBA(pixels: ptr UncheckedArray[uint32]; w, h: int;
-                 dst: coords.Rect): bool =
-  winPutRGBA(pixels, w, h, dst, false)
+                 dst: coords.Rect; format: RGBAFormat): bool =
+  winPutRGBA(pixels, w, h, dst, false, format)
 
 proc winDrawRGBA(pixels: ptr UncheckedArray[uint32]; w, h: int;
-                 dst: coords.Rect): bool =
-  winPutRGBA(pixels, w, h, dst, true)
+                 dst: coords.Rect; format: RGBAFormat): bool =
+  winPutRGBA(pixels, w, h, dst, true, format)
 
 proc winOpenFont(path: string; size: int; style: FontStyles;
                  metrics: var FontMetrics): screen.Font =

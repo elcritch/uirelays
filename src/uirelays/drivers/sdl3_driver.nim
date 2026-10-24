@@ -452,7 +452,8 @@ var
   blitTexW, blitTexH: int
 
 proc sdlBlitRGBA(pixels: ptr UncheckedArray[uint32]; w, h: int;
-                 dst: coords.Rect): bool =
+                 dst: coords.Rect; format: RGBAFormat): bool =
+  if format != RGBAFormat.rgbOpaque: return false
   if ren == nil or pixels == nil or w <= 0 or h <= 0 or
       dst.w <= 0 or dst.h <= 0:
     return false

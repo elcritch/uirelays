@@ -23,6 +23,11 @@ exec "nim c -r tests/tinyniftest.nim"
 exec "nim c -r tests/layouttest.nim"
 
 exec "nim c -r tests/rgbatest.nim"
+when defined(windows):
+  exec "nim c -r tests/nativealphatest.nim"
+elif defined(linux):
+  if findExe("xvfb-run").len > 0:
+    exec "xvfb-run -a nim c -r tests/nativealphatest.nim"
 when defined(macosx):
   let cocoaTest = getTempDir() / ("uirelays-cocoargbatest-" & $getCurrentProcessId())
   exec "clang -fobjc-arc tests/cocoargbatest.m -o " & quoteShell(cocoaTest) &

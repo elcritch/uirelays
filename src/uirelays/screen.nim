@@ -10,6 +10,10 @@ type
   Font* = distinct int    ## opaque handle; 0 = invalid
   Image* = distinct int   ## opaque handle; 0 = invalid
 
+  RGBAFormat* {.pure.} = enum
+    rgbOpaque        ## 0x00RRGGBB; the top byte is ignored (legacy default).
+    argbPremultiplied ## 0xAARRGGBB; RGB channels are multiplied by alpha.
+
   FontStyle* {.pure.} = enum
     bold, italics
   FontStyles* = set[FontStyle]
@@ -100,12 +104,12 @@ type
       ## Optional, and `(0, 0)` when a driver leaves it nil -- a caller that
       ## wants the aspect ratio has to have another plan for that case.
     blitRGBA*: proc (pixels: ptr UncheckedArray[uint32]; w, h: int;
-                     dst: Rect): bool {.nimcall.}
-      ## Put `w` * `h` finished pixels on the surface at `dst`, one row after
-      ## another, each `0x00RRGGBB` in the host's own byte order. Opaque:
-      ## whatever was transparent about them the caller has already composited
-      ## against what it wanted behind them, because a surface is not asked to
-      ## blend and the top byte is ignored.
+                     dst: Rect; format: RGBAFormat): bool {.nimcall.}
+      ## Put `w` * `h` pixels at `dst`, top to bottom, in host byte order.
+      ## rgbOpaque takes 0x00RRGGBB and ignores the top byte (legacy default).
+      ## argbPremultiplied takes 0xAARRGGBB and composites source-over;
+      ## each RGB channel is already multiplied by alpha.
+      ## The caller retains the buffer and may reuse it after this returns.
       ##
       ## No scaling -- `w` and `h` are what lands, and `dst.w` and `dst.h`
       ## only clip. A caller with a picture of another size resizes it first,
@@ -125,8 +129,8 @@ type
       ## is the same answer every time for a given surface.
 
     drawRGBA*: proc (pixels: ptr UncheckedArray[uint32]; w, h: int;
-                     dst: Rect): bool {.nimcall.}
-      ## Draw the entire opaque 0x00RRGGBB image into `dst` in driver
+                     dst: Rect; format: RGBAFormat): bool {.nimcall.}
+      ## Draw the entire image into `dst` in driver
       ## coordinates. Unlike blitRGBA, source and destination sizes may differ.
       ## A Retina caller supplies two source pixels per point to match
       ## ScreenLayout.scaleX/scaleY without upscaling. Pixels are borrowed
@@ -321,23 +325,33 @@ proc imageSize*(img: Image): tuple[w, h: int] =
   ## `(0, 0)` from a driver that does not offer it. See the relay.
   if drawRelays.imageSize != nil: drawRelays.imageSize(img)
   else: (0, 0)
-proc blitRGBA*(pixels: ptr UncheckedArray[uint32]; w, h: int; dst: Rect): bool =
+proc blitRGBA*(pixels: ptr UncheckedArray[uint32]; w, h: int; dst: Rect;
+               format = RGBAFormat.rgbOpaque): bool =
   ## `false` from a driver that does not offer it, which is the same answer
   ## it gives for a surface that cannot take the pixels: either way the
   ## caller draws something else. See the relay.
-  if drawRelays.blitRGBA != nil: drawRelays.blitRGBA(pixels, w, h, dst)
+  if pixels == nil or w <= 0 or h <= 0 or dst.w <= 0 or dst.h <= 0 or
+      w > int32.high div 4 or h > int32.high or w > int.high div 4 div h or
+      dst.w > int32.high div 4 or dst.h > int32.high or
+      dst.w > int.high div 4 div dst.h:
+    return false
+  if drawRelays.blitRGBA != nil: drawRelays.blitRGBA(pixels, w, h, dst, format)
   else: false
 
-proc drawRGBA*(pixels: ptr UncheckedArray[uint32]; w, h: int; dst: Rect): bool =
+proc drawRGBA*(pixels: ptr UncheckedArray[uint32]; w, h: int; dst: Rect;
+               format = RGBAFormat.rgbOpaque): bool =
   ## Draw a full-resolution image into a logical destination rectangle.
   ## Falls back to blitRGBA only when source and destination sizes match.
   ## False means the driver cannot draw the requested image.
-  if pixels == nil or w <= 0 or h <= 0 or dst.w <= 0 or dst.h <= 0:
+  if pixels == nil or w <= 0 or h <= 0 or dst.w <= 0 or dst.h <= 0 or
+      w > int32.high div 4 or h > int32.high or w > int.high div 4 div h or
+      dst.w > int32.high div 4 or dst.h > int32.high or
+      dst.w > int.high div 4 div dst.h:
     return false
   if drawRelays.drawRGBA != nil:
-    drawRelays.drawRGBA(pixels, w, h, dst)
+    drawRelays.drawRGBA(pixels, w, h, dst, format)
   elif w == dst.w and h == dst.h:
-    blitRGBA(pixels, w, h, dst)
+    blitRGBA(pixels, w, h, dst, format)
   else:
     false
 

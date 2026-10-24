@@ -175,7 +175,8 @@ var
   blitTexW, blitTexH: cint
 
 proc sdlBlitRGBA(pixels: ptr UncheckedArray[uint32]; w, h: int;
-                 dst: coords.Rect): bool =
+                 dst: coords.Rect; format: RGBAFormat): bool =
+  if format != RGBAFormat.rgbOpaque: return false
   ## This driver decodes no pictures, so it fills in none of the image
   ## relays. What it can do is take finished pixels from whoever does, and
   ## that is all `blitRGBA` is.

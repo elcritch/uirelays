@@ -10,7 +10,7 @@ int main(void) {
       0xff0000, 0x00ff00, 0x0000ff, 0xffffff,
       0x00ffff, 0xff00ff, 0xffff00, 0x000000
     };
-    assert(cocoa_drawRGBA(pixels, 4, 2, 0, 0, 2, 1));
+    assert(cocoa_drawRGBA(pixels, 4, 2, 0, 0, 2, 1, 0));
     uint32_t *backing = CGBitmapContextGetData(backingCtx);
     /* Each independently colored source pixel survives on a 2x surface. */
     for (int i = 0; i < 8; ++i)
@@ -29,7 +29,7 @@ int main(void) {
       assert((backing[i] & 0xffffff) == pixels[i]);
 
     uint32_t legacy[] = {0xff0000, 0x0000ff};
-    assert(cocoa_blitRGBA(legacy, 2, 1, 0, 0, 2, 1));
+    assert(cocoa_blitRGBA(legacy, 2, 1, 0, 0, 2, 1, 0));
     backing = CGBitmapContextGetData(backingCtx);
     assert((backing[0] & 0xffffff) == 0xff0000);
     assert((backing[3] & 0xffffff) == 0x0000ff);
@@ -38,6 +38,36 @@ int main(void) {
     ensureBacking(2, 1, 1.0);
     assert(CGBitmapContextGetWidth(backingCtx) == 2);
     assert(CGBitmapContextGetHeight(backingCtx) == 1);
+    /* Native source-over preserves transparent edges and premultiplied color. */
+    cocoa_fillRect(0, 0, 2, 1, 0, 0, 255, 255);
+    uint32_t alpha[] = {0x80800000, 0x00000000};
+    assert(cocoa_drawRGBA(alpha, 2, 1, 0, 0, 2, 1, 1));
+    backing = CGBitmapContextGetData(backingCtx);
+    assert(backing[0] == 0xff80007f);
+    assert(backing[1] == 0xff0000ff);
+    assert(alpha[0] == 0x80800000 && alpha[1] == 0x00000000);
+
+    /* A clipped blit keeps the original row stride, without scaling. */
+    ensureBacking(2, 2, 1.0);
+    cocoa_fillRect(0, 0, 2, 2, 0, 0, 255, 255);
+    uint32_t rows[] = {0x80800000, 0xff00ff00, 0x80008000, 0xffffffff};
+    assert(cocoa_blitRGBA(rows, 2, 2, 0, 0, 1, 2, 1));
+    backing = CGBitmapContextGetData(backingCtx);
+    assert(backing[0] == 0xff80007f && backing[1] == 0xff0000ff);
+    assert(backing[2] == 0xff00807f && backing[3] == 0xff0000ff);
+
+    /* Alpha and source resolution survive Retina destination scaling. */
+    ensureBacking(2, 1, 2.0);
+    cocoa_fillRect(0, 0, 2, 1, 0, 0, 255, 255);
+    uint32_t retina[] = {0x80800000, 0x00000000, 0x80008000, 0xffffffff,
+                         0x00000000, 0x80800000, 0xffffffff, 0x80008000};
+    assert(cocoa_drawRGBA(retina, 4, 2, 0, 0, 2, 1, 1));
+    backing = CGBitmapContextGetData(backingCtx);
+    for (int i = 0; i < 8; ++i) {
+      uint32_t inverse = 255 - (retina[i] >> 24);
+      uint32_t expected = 0xff000000 | (retina[i] & 0xffffff) | inverse;
+      assert(backing[i] == expected);
+    }
     CGContextRelease(backingCtx);
     backingCtx = NULL;
   }

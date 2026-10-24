@@ -588,10 +588,10 @@ void cocoa_imageSize(int handle, int *outW, int *outH) {
   if (outH) *outH = (int)CGImageGetHeight(imageSlots[idx]);
 }
 
-/* Finished pixels: opaque 0x00RRGGBB words in host byte order, top to bottom.
+/* Finished pixels: host-order RGB (format 0) or premultiplied ARGB (format 1).
    blitRGBA clips only; drawRGBA maps the whole image into its destination. */
 static int drawRGBA(const uint32_t *pixels, int w, int h,
-                    int dstX, int dstY, int dstW, int dstH, int scaleImage) {
+                    int dstX, int dstY, int dstW, int dstH, int scaleImage, int format) {
   if (!backingCtx || !pixels || w <= 0 || h <= 0 || dstW <= 0 || dstH <= 0)
     return 0;
 
@@ -601,11 +601,10 @@ static int drawRGBA(const uint32_t *pixels, int w, int h,
     CGDataProviderCreateWithData(NULL, pixels, (size_t)w * (size_t)h * 4, NULL);
   if (!prov) { CGColorSpaceRelease(cs); return 0; }
 
-  /* Little-endian 32-bit words with the top byte skipped is exactly
-     0x00RRGGBB as an int on every Mac Apple has shipped. */
+  /* Interpret the pixel words in host byte order; only alpha mode reads A. */
   CGImageRef img = CGImageCreate(
     (size_t)w, (size_t)h, 8, 32, (size_t)w * 4, cs,
-    kCGBitmapByteOrder32Little | kCGImageAlphaNoneSkipFirst,
+    kCGBitmapByteOrder32Host | (format == 1 ? kCGImageAlphaPremultipliedFirst : kCGImageAlphaNoneSkipFirst),
     prov, NULL, false, kCGRenderingIntentDefault);
   CGDataProviderRelease(prov);
   CGColorSpaceRelease(cs);
@@ -617,6 +616,7 @@ static int drawRGBA(const uint32_t *pixels, int w, int h,
   int drawH = scaleImage ? dstH : h;
 
   CGContextSaveGState(backingCtx);
+  CGContextSetBlendMode(backingCtx, kCGBlendModeNormal);
   CGContextClipToRect(backingCtx, CGRectMake(dstX, dstY, cw, ch));
   /* The view is flipped and a CGImage is bottom-up, so the destination is
      flipped back around itself before the picture goes down in it. */
@@ -631,13 +631,13 @@ static int drawRGBA(const uint32_t *pixels, int w, int h,
 }
 
 int cocoa_blitRGBA(const uint32_t *pixels, int w, int h,
-                   int dstX, int dstY, int dstW, int dstH) {
-  return drawRGBA(pixels, w, h, dstX, dstY, dstW, dstH, 0);
+                   int dstX, int dstY, int dstW, int dstH, int format) {
+  return drawRGBA(pixels, w, h, dstX, dstY, dstW, dstH, 0, format);
 }
 
 int cocoa_drawRGBA(const uint32_t *pixels, int w, int h,
-                   int dstX, int dstY, int dstW, int dstH) {
-  return drawRGBA(pixels, w, h, dstX, dstY, dstW, dstH, 1);
+                   int dstX, int dstY, int dstW, int dstH, int format) {
+  return drawRGBA(pixels, w, h, dstX, dstY, dstW, dstH, 1, format);
 }
 
 void cocoa_drawImage(int handle, int srcX, int srcY, int srcW, int srcH,

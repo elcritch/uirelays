@@ -1,10 +1,12 @@
-## Opaque RGB image resampling for drivers without native image scaling.
+## RGB and premultiplied ARGB resampling for drivers without native scaling.
 import std/math
 
 proc resizedRGBA*(
-    pixels: ptr UncheckedArray[uint32], width, height, outputWidth, outputHeight: int
+    pixels: ptr UncheckedArray[uint32], width, height, outputWidth, outputHeight: int,
+    preserveAlpha = false
 ): seq[uint32] =
   ## Returns tightly packed 0x00RRGGBB pixels with bilinear resampling.
+  ## preserveAlpha interpolates all four premultiplied channels together.
   ## HiDPI callers normally match destination device dimensions and avoid
   ## this path entirely; X11 uses it when an image actually changes size.
   if pixels == nil or min(min(width, height), min(outputWidth, outputHeight)) <= 0:
@@ -31,7 +33,8 @@ proc resizedRGBA*(
         x1 = min(x0 + 1, width - 1)
         fx = sx - x0.float64
       var pixel: uint32
-      for shift in [0, 8, 16]:
+      for channel in 0 .. (if preserveAlpha: 3 else: 2):
+        let shift = channel * 8
         let
           a = ((pixels[y0 * width + x0] shr shift) and 255).float64
           b = ((pixels[y0 * width + x1] shr shift) and 255).float64

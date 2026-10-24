@@ -22,6 +22,22 @@ int main(void) {
     }
   }
 
+  /* Alpha mode preserves coverage while scaling, including source edges. */
+  uint32_t alpha = 0x80800000;
+  cairo_surface_t *translucent = cairo_image_surface_create_for_data(
+    (unsigned char *)&alpha, CAIRO_FORMAT_ARGB32, 1, 1, 4);
+  cairo_set_source_rgb(cr, 0, 0, 1);
+  cairo_paint(cr);
+  uirelays_draw_cairo_rgba(cr, translucent, 1, 1, 1, 1, 4, 4);
+  cairo_surface_flush(target);
+  for (int y = 0; y < 6; ++y)
+    for (int x = 0; x < 6; ++x) {
+      uint32_t expected = x >= 1 && x < 5 && y >= 1 && y < 5 ? 0x80007f : 0x0000ff;
+      assert((pixels[y*stride+x] & 0xffffff) == expected);
+    }
+  assert(alpha == 0x80800000);
+  cairo_surface_destroy(translucent);
+
   cairo_destroy(cr);
   cairo_surface_destroy(target);
   cairo_surface_destroy(source);

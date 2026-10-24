@@ -782,7 +782,7 @@ proc gtkDrawPoint(x, y: int; color: screen.Color) =
   gtkFillRect(rect(x, y, 1, 1), color)
 
 proc gtkPutRGBA(pixels: ptr UncheckedArray[uint32]; w, h: int;
-                dst: coords.Rect; scaleImage: bool): bool =
+                dst: coords.Rect; scaleImage: bool; format: RGBAFormat): bool =
   ## This driver decodes no pictures, so it fills in none of the image
   ## relays. What it can do is take finished pixels from whoever does.
   ensureBackingCr()
@@ -792,7 +792,7 @@ proc gtkPutRGBA(pixels: ptr UncheckedArray[uint32]; w, h: int;
   # all of them by the time `cairo_paint` returns -- which is before this
   # does, and so before the caller may touch them again.
   let surf = cairo_image_surface_create_for_data(cast[pointer](pixels),
-    gint(CAIRO_FORMAT_RGB24), gint(w), gint(h), gint(w * 4))
+    gint(if format == RGBAFormat.argbPremultiplied: CAIRO_FORMAT_ARGB32 else: CAIRO_FORMAT_RGB24), gint(w), gint(h), gint(w * 4))
   if surf == nil: return false
   if scaleImage:
     drawCairoRGBA(backingCr, surf, w.cint, h.cint, dst.x.cint, dst.y.cint,
@@ -810,12 +810,12 @@ proc gtkPutRGBA(pixels: ptr UncheckedArray[uint32]; w, h: int;
   result = true
 
 proc gtkBlitRGBA(pixels: ptr UncheckedArray[uint32]; w, h: int;
-                 dst: coords.Rect): bool =
-  gtkPutRGBA(pixels, w, h, dst, false)
+                 dst: coords.Rect; format: RGBAFormat): bool =
+  gtkPutRGBA(pixels, w, h, dst, false, format)
 
 proc gtkDrawRGBA(pixels: ptr UncheckedArray[uint32]; w, h: int;
-                 dst: coords.Rect): bool =
-  gtkPutRGBA(pixels, w, h, dst, true)
+                 dst: coords.Rect; format: RGBAFormat): bool =
+  gtkPutRGBA(pixels, w, h, dst, true, format)
 
 proc gtkSetCursor(c: CursorKind) =
   if drawingArea == nil: return

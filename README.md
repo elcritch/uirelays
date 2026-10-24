@@ -277,6 +277,25 @@ back to it when source and destination dimensions match, and returns `false`
 for unsupported drawing requests. Cocoa also preserves the last backing image
 during live resize, until the application repaints the new dimensions.
 
+Pass `RGBAFormat.argbPremultiplied` to either method to composite a translucent
+image over previous drawing. Pixels are then host-order `0xAARRGGBB` words,
+with each RGB channel already multiplied by alpha. For example,
+`0x80800000` is half-transparent red, and `0x00000000` is transparent.
+
+```nim
+var pixels = [0x80800000'u32, 0x00000000'u32]
+discard drawRGBA(cast[ptr UncheckedArray[uint32]](addr pixels[0]),
+  2, 1, rect(20, 20, 2, 1), RGBAFormat.argbPremultiplied)
+```
+
+Cocoa uses Core Graphics, WinAPI uses GDI `AlphaBlend`, X11 uses XRender,
+and GTK4 uses Cairo for source-over composition. The optional FigDraw drivers
+also preserve premultiplied alpha. SDL2/SDL3 currently return `false` for alpha
+buffers. Omitting the format retains the original opaque RGB behavior, including
+buffers whose unused top byte is zero. Scaling and clipping rules are unchanged.
+Custom drivers must add the `format: RGBAFormat` parameter to their two RGBA
+relay callbacks; unsupported formats should return `false` without drawing.
+
 ## Layout
 
 A window's boxes are described in NIF -- a

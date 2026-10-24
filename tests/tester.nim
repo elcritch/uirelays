@@ -50,6 +50,7 @@ execBackend("")
 when defined(features.uirelays.figDrawWindy):
   execBackend("--define:\"features.uirelays.figDrawWindy\"")
 when defined(features.uirelays.figDrawSiwin):
+  exec "nim c -r tests/figdrawsiwinlooptest.nim"
   execBackend("--define:\"features.uirelays.figDrawSiwin\"")
 when defined(linux):
   execBackend("-d:gtk4")

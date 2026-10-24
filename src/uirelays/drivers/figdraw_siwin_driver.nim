@@ -4,7 +4,7 @@
 when defined(macosx):
   {.passC: "-Wno-incompatible-function-pointer-types".}
 
-import std/[deques, hashes, math, os, tables, times, unicode]
+import std/[deques, hashes, math, monotimes, os, tables, times, unicode]
 
 import pixie
 import pixie/fonts
@@ -35,6 +35,12 @@ type
 
   ImageSlot = object
     image: pixie.Image
+
+  PixelUploadSlot = object
+    key: Hash
+    pixelsKey: Hash
+    width, height: int
+    generation: uint64
 
   DrawOpKind = enum
     dopFillRect
@@ -71,6 +77,7 @@ type
 
 var
   appWindow: siwin.Window
+  appGlobals: SiwinGlobals
   renderer: FigRenderer[SiwinRenderBackend]
   useAutoScale: bool
   eventQueue: Deque[input.Event]
@@ -82,6 +89,8 @@ var
   typefaceIdsByPath: Table[string, TypefaceId]
   siwinInitialized = false
   frameStarted = false
+  presentationPending = false
+  pixelUploadSlots: seq[PixelUploadSlot]
 
 proc toFigColor(c: screen.Color): chroma.Color =
   rgba(c.r, c.g, c.b, c.a).color
@@ -169,6 +178,15 @@ proc getImageSlot(img: screen.Image): ptr ImageSlot =
 
 proc pushCurrentRenderRequest() =
   queueEvent(input.Event(kind: NoEvent))
+
+proc handleRenderRequest() =
+  # refresh() requests one window service to present the submitted frame.
+  # An expose requests an application repaint, but our own presentation must
+  # not request another repaint and feed an event-driven redraw loop forever.
+  if presentationPending:
+    presentationPending = false
+  else:
+    pushCurrentRenderRequest()
 
 proc translateMods(mods: set[siwin.ModifierKey]): set[input.Modifier] =
   if siwin.ModifierKey.shift in mods: result.incl ShiftPressed
@@ -359,20 +377,29 @@ proc replayImage(ctx: BackendContext; op: DrawOp) =
     false,
   )
 
-proc replayPixels(ctx: BackendContext; op: DrawOp) =
-  ## The blit path. It goes through the atlas like everything else, keyed on
-  ## what the pixels are rather than on where they came from: a caller that
-  ## hands over the same picture every frame -- which is the ordinary case,
-  ## an editor redrawing a document that has not changed -- puts one entry in
-  ## and hits it forever after. A caller whose pixels really do change every
-  ## frame puts in a new entry every frame, so this is not the road to a video
-  ## player; `blitRGBA` is for a picture, a chart, a page.
+proc replayPixels(ctx: BackendContext; op: DrawOp; index: int) =
+  ## One atlas slot per blit position in a frame, reused across animation frames.
+  ## Content hashes avoid uploads for unchanged pictures; changed pixels update
+  ## the same rectangle instead of growing the atlas for every animation frame.
   if op.pixels.isNil:
     return
-  if op.pixelsKey notin ctx.entries():
-    ctx.putImage(op.pixelsKey, op.pixels)
+  if index >= pixelUploadSlots.len:
+    pixelUploadSlots.setLen(index + 1)
+    pixelUploadSlots[index].key = hash(("uirelays-pixel-slot", index))
+  let slot = addr pixelUploadSlots[index]
+  if slot.key notin ctx.entries() or slot.width != op.pixels.width or
+      slot.height != op.pixels.height:
+    if slot.key in ctx.entries():
+      ctx.removeAtlasEntry(slot.key)
+    ctx.putImage(slot.key, op.pixels)
+  elif slot.generation != ctx.atlasGeneration() or slot.pixelsKey != op.pixelsKey:
+    ctx.updateImage(slot.key, op.pixels)
+  slot.pixelsKey = op.pixelsKey
+  slot.width = op.pixels.width
+  slot.height = op.pixels.height
+  slot.generation = ctx.atlasGeneration()
   ctx.drawImage(
-    op.pixelsKey,
+    slot.key,
     vec2(scaledF(op.pixelsDst.x), scaledF(op.pixelsDst.y)),
     toFigColor(color(255, 255, 255, 255)),
     vec2(scaledF(op.pixelsDst.w), scaledF(op.pixelsDst.h)),
@@ -392,6 +419,7 @@ proc renderQueuedOps() =
   let ctx: BackendContext = renderer.ctx
   ctx.saveTransform()
   ctx.scale(ctx.pixelScale)
+  var pixelIndex = 0
   for op in drawOps:
     let hasClip = applyClip(ctx, op.state)
     case op.kind
@@ -420,7 +448,8 @@ proc renderQueuedOps() =
     of dopImage:
       replayImage(ctx, op)
     of dopPixels:
-      replayPixels(ctx, op)
+      replayPixels(ctx, op, pixelIndex)
+      inc pixelIndex
     if hasClip:
       ctx.popMask()
   ctx.restoreTransform()
@@ -444,12 +473,13 @@ proc figCreateWindow(layout: var ScreenLayout; icon: pointer; iconLen: int) =
       title = "uirelays",
     )
     useAutoScale = appWindow.configureUiScale()
+    appGlobals = sharedSiwinGlobals()
     renderer.setupBackend(appWindow)
     appWindow.eventsHandler = WindowEventsHandler(
       onClose: proc(e: CloseEvent) =
         queueEvent(input.Event(kind: WindowCloseEvent)),
       onRender: proc(e: RenderEvent) =
-        pushCurrentRenderRequest(),
+        handleRenderRequest(),
       onResize: proc(e: ResizeEvent) =
         appWindow.refreshUiScale(useAutoScale)
         let scale = currentScale().round().int
@@ -531,6 +561,7 @@ proc figRefresh() =
     drawOps.setLen(0)
     return
   renderQueuedOps()
+  presentationPending = true
   appWindow.redraw()
 
 proc figSaveState() =
@@ -702,33 +733,39 @@ proc figPutClipboardText(text: string) =
   if not appWindow.isNil:
     appWindow.clipboard.text = text
 
-proc pumpWindowStep() =
+proc pumpWindowEvents() =
   if not appWindow.isNil and appWindow.opened:
-    appWindow.step()
+    discard appGlobals.pollEvents()
+    appWindow.serviceWindow()
 
 proc figPollEvent(e: var input.Event; flags: set[InputFlag]): bool =
   discard flags
   if eventQueue.len == 0:
-    pumpWindowStep()
+    pumpWindowEvents()
   if eventQueue.len == 0:
     return false
   e = eventQueue.popFirst()
   true
 
 proc figWaitEvent(e: var input.Event; timeoutMs: int; flags: set[InputFlag]): bool =
-  discard flags
-  let startMs = (epochTime() * 1000).int
-  let deadlineMs =
-    if timeoutMs < 0: int.high
-    else: startMs + timeoutMs
-  while eventQueue.len == 0:
-    pumpWindowStep()
-    if timeoutMs >= 0 and (epochTime() * 1000).int >= deadlineMs:
+  let deadline = getMonoTime() + initDuration(milliseconds = max(timeoutMs, 0))
+  if figPollEvent(e, flags):
+    return true
+  while not appWindow.isNil and appWindow.opened:
+    let remaining =
+      if timeoutMs < 0: high(Duration)
+      else: deadline - getMonoTime()
+    if timeoutMs >= 0 and remaining.inNanoseconds <= 0:
       return false
-    if timeoutMs >= 0:
-      os.sleep(1)
-  e = eventQueue.popFirst()
-  true
+    let activity = appGlobals.waitEvents(remaining)
+    if appWindow.opened:
+      appWindow.serviceWindow()
+    if eventQueue.len > 0:
+      e = eventQueue.popFirst()
+      return true
+    if activity == eventTimeout:
+      return false
+  false
 
 proc figGetTicks(): int =
   (epochTime() * 1000).int
@@ -740,6 +777,7 @@ proc figShutdown() =
   if not appWindow.isNil and appWindow.opened:
     close(appWindow)
   appWindow = nil
+  appGlobals = nil
   renderer = nil
   eventQueue.clear()
   drawOps.setLen(0)
@@ -748,8 +786,10 @@ proc figShutdown() =
   fontSlots.setLen(0)
   images.setLen(0)
   typefaceIdsByPath.clear()
+  pixelUploadSlots.setLen(0)
   siwinInitialized = false
   frameStarted = false
+  presentationPending = false
 
 proc initFigDrawSiwinDriver*() =
   windowRelays = WindowRelays(

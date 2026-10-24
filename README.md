@@ -56,6 +56,17 @@ nim c --define:"features.uirelays.figDrawSiwin" examples/hello.nim
 The matching `-d:figDrawWindy` and `-d:figDrawSiwin` convenience aliases are
 also accepted once their dependencies are available.
 
+The FigDraw + siwin driver uses Siwin's blocking global event loop for
+`waitEvent`, while `pollEvent` remains nonblocking. Presenting a frame with
+`refresh()` does not request another application repaint. Native expose and
+resize events still request redraws. Animated RGBA draws reuse their atlas
+slots; unchanged pictures do not upload again.
+
+This optional FigDraw driver uses GPU presentation. The default Cocoa,
+WinAPI, and X11 drivers use the platform drawing APIs. The siwin driver
+requires Siwin 1.1.2 or newer for its global `pollEvents`/`waitEvents` and
+`serviceWindow` APIs.
+
 ### Nim Packages For SDL Backends
 
 The SDL backends need extra Nim packages in addition to the native system

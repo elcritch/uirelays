@@ -17,4 +17,4 @@ feature "figdrawwindy":
 
 feature "figdrawsiwin":
   requires "figdraw >= 0.28.1"
-  requires "siwin >= 1.0.0"
+  requires "siwin >= 1.1.2"

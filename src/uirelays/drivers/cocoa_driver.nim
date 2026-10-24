@@ -23,6 +23,12 @@ typedef struct {
 
 import ../coords, ../input, ../screen
 
+proc prepareSiwinSurface*(width, height: cint; scale: cdouble): cint
+  {.importc: "cocoa_prepareSiwinSurface", cdecl.}
+proc presentSiwinSurface*(pixels: pointer; width, height: cint): cint
+  {.importc: "cocoa_presentSiwinSurface", cdecl.}
+proc detachSiwinSurface*() {.importc: "cocoa_detachSurface", cdecl.}
+
 # --- C bindings to cocoa_backend.m ---
 # All procs use {.importc.} with explicit C names to avoid Nim's
 # identifier normalisation colliding with the Nim wrapper procs.

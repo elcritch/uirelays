@@ -70,6 +70,25 @@ int main(void) {
     }
     CGContextRelease(backingCtx);
     backingCtx = NULL;
+
+    /* Siwin may replace its client buffer for every presentation. The native
+       compositor owns independent pixels and can present into each new one. */
+    assert(cocoa_prepareSiwinSurface(4, 2, 2.0));
+    cocoa_fillRect(0, 0, 2, 1, 255, 0, 0, 255);
+    uint32_t client[8] = {0};
+    assert(cocoa_presentSiwinSurface(client, 4, 2));
+    assert(client[0] == 0xff0000ff); /* RGBA bytes: red, opaque */
+    memset(client, 0, sizeof(client));
+    assert(cocoa_prepareSiwinSurface(4, 2, 2.0));
+    assert(cocoa_presentSiwinSurface(client, 4, 2));
+    for (int i = 0; i < 8; ++i) assert(client[i] == 0xff0000ff);
+    assert(cocoa_prepareSiwinSurface(6, 4, 2.0));
+    uint32_t larger[24] = {0};
+    assert(cocoa_presentSiwinSurface(larger, 6, 4));
+    assert(larger[0] == 0xff0000ff && larger[3] == 0xff0000ff);
+    assert(larger[6] == 0xff0000ff && larger[9] == 0xff0000ff);
+    cocoa_detachSurface();
+    assert(!cocoa_presentSiwinSurface(client, 4, 2));
   }
   return 0;
 }

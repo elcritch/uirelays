@@ -52,6 +52,11 @@ when defined(features.uirelays.figDrawWindy):
 when defined(features.uirelays.figDrawSiwin):
   exec "nim c -r tests/figdrawsiwinlooptest.nim"
   execBackend("--define:\"features.uirelays.figDrawSiwin\"")
+elif defined(features.uirelays.siwin):
+  execBackend("--define:\"features.uirelays.siwin\"")
+when defined(uirelaysWindowTests):
+  # Opt in on a real desktop, or run the tester inside xvfb-run on Linux.
+  exec "nim c -r tests/siwinnativetest.nim"
 when defined(linux):
   execBackend("-d:gtk4")
 # execBackend("-d:sdl2")

@@ -401,7 +401,6 @@ void cocoa_measureText(int handle, const char *text, int *outW, int *outH) {
 static CGContextRef backingCtx = NULL;
 static int backingW = 0, backingH = 0;
 static CGFloat backingScale = 1.0;
-
 /* Clip rect stack (simple, max 32 deep) */
 #define MAX_CLIP_STACK 32
 static CGRect clipStack[MAX_CLIP_STACK];
@@ -446,6 +445,40 @@ static void ensureBacking(int w, int h, CGFloat scale) {
   backingW = w;
   backingH = h;
   backingScale = scale;
+}
+
+/* A persistent native compositor, separate from Siwin's transient pixel buffer. */
+int cocoa_prepareSiwinSurface(int pw, int ph, double scale) {
+  if (pw <= 0 || ph <= 0 || scale <= 0) return 0;
+  ensureBacking((int)lround(pw / scale), (int)lround(ph / scale), scale);
+  return backingCtx != NULL;
+}
+
+int cocoa_presentSiwinSurface(void *pixels, int pw, int ph) {
+  if (!backingCtx || !pixels || pw <= 0 || ph <= 0) return 0;
+  CGContextFlush(backingCtx);
+  const unsigned char *source = CGBitmapContextGetData(backingCtx);
+  size_t stride = CGBitmapContextGetBytesPerRow(backingCtx);
+  size_t width = CGBitmapContextGetWidth(backingCtx);
+  size_t height = CGBitmapContextGetHeight(backingCtx);
+  unsigned char *destination = pixels;
+  for (int y = 0; y < ph; ++y)
+    for (int x = 0; x < pw; ++x) {
+      uint32_t p = (x < width && y < height)
+        ? ((const uint32_t *)(source + (size_t)y * stride))[x] : 0;
+      size_t offset = ((size_t)y * pw + x) * 4;
+      destination[offset] = (p >> 16) & 255;
+      destination[offset + 1] = (p >> 8) & 255;
+      destination[offset + 2] = p & 255;
+      destination[offset + 3] = p >> 24;
+    }
+  return 1;
+}
+
+void cocoa_detachSurface(void) {
+  if (backingCtx) CGContextRelease(backingCtx);
+  backingCtx = NULL;
+  backingW = backingH = 0;
 }
 
 /* ---- Drawing primitives ----------------------------------------------- */

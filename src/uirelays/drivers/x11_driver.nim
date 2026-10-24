@@ -1649,3 +1649,56 @@ proc initX11Driver*() =
     shutdown: x11QuitRequest)
   clipboardRelays = ClipboardRelays(
     getText: x11GetClipboardText, putText: x11PutClipboardText)
+
+proc attachSiwinSurface*(display: pointer; window: uint64; width, height: int) =
+  ## Borrow Siwin's X11 connection/window, retaining native Xft/XRender drawing.
+  if gDisplay != display or gWindow != XID(window) or gGC == nil:
+    gDisplay = display
+    gWindow = XID(window)
+    gScreen = XDefaultScreen(display)
+    gVisual = XDefaultVisual(display, gScreen)
+    gColormap = XDefaultColormap(display, gScreen)
+    gDepth = XDefaultDepth(display, gScreen)
+    gGC = XCreateGC(display, gWindow, 0, nil)
+  if gWidth != width.cint or gHeight != height.cint or gBackPixmap == None:
+    let previousPixmap = gBackPixmap
+    let previousDraw = gXftDraw
+    let previousWidth = gWidth
+    let previousHeight = gHeight
+    gBackPixmap = None
+    gXftDraw = nil
+    gWidth = width.cint
+    gHeight = height.cint
+    recreateBackBuffer()
+    if previousPixmap != None:
+      let copyGC = XCreateGC(gDisplay, gBackPixmap, 0, nil)
+      discard XCopyArea(gDisplay, previousPixmap, gBackPixmap, copyGC, 0, 0,
+        min(previousWidth, gWidth).cuint, min(previousHeight, gHeight).cuint, 0, 0)
+      discard XFreeGC(gDisplay, copyGC)
+      XftDrawDestroy(previousDraw)
+      discard XFreePixmap(gDisplay, previousPixmap)
+
+proc presentSiwinSurface*() =
+  ## Repaint exposed areas even when the application's frame hash is unchanged.
+  if gDisplay != nil and gBackPixmap != None:
+    discard XCopyArea(gDisplay, gBackPixmap, gWindow, gGC, 0, 0,
+      gWidth.cuint, gHeight.cuint, 0, 0)
+    discard XFlush(gDisplay)
+
+proc detachSiwinSurface*() =
+  ## Release our drawing resources without closing Siwin's borrowed connection.
+  if gDisplay != nil:
+    for font in fonts.mitems:
+      if font.xftFont != nil: XftFontClose(gDisplay, font.xftFont)
+      font.xftFont = nil
+    if gXftDraw != nil: XftDrawDestroy(gXftDraw)
+    if gBackPixmap != None: discard XFreePixmap(gDisplay, gBackPixmap)
+    if gGC != nil: discard XFreeGC(gDisplay, gGC)
+  fonts.setLen(0)
+  gXftDraw = nil
+  gBackPixmap = None
+  gGC = nil
+  gDisplay = nil
+  gWindow = None
+  gWidth = 0
+  gHeight = 0

@@ -1107,3 +1107,47 @@ proc initWinapiDriver*() =
     shutdown: winQuitRequest)
   clipboardRelays = ClipboardRelays(
     getText: winGetClipboardText, putText: winPutClipboardText)
+
+var siwinSurfaceOwned = false
+
+proc detachSiwinSurface*() =
+  if siwinSurfaceOwned and gBackDC != nil:
+    discard SelectObject(gBackDC, gOldBmp)
+    discard DeleteObject(cast[HGDIOBJ](gBackBmp))
+    discard DeleteDC(gBackDC)
+  gBackDC = nil
+  gBackBmp = nil
+  gOldBmp = nil
+  gWidth = 0
+  gHeight = 0
+  siwinSurfaceOwned = false
+
+proc attachSiwinSurface*(dc: pointer; width, height: int) =
+  ## Own a persistent GDI compositor, independent of Siwin's replaceable DIB.
+  if dc == nil or width <= 0 or height <= 0: return
+  if siwinSurfaceOwned and gWidth == width.int32 and gHeight == height.int32: return
+  let nextDC = CreateCompatibleDC(cast[HDC](dc))
+  if nextDC == nil: raise newException(ValueError, "Cannot create the GDI compositor")
+  let nextBitmap = CreateCompatibleBitmap(cast[HDC](dc), width.int32, height.int32)
+  if nextBitmap == nil:
+    discard DeleteDC(nextDC)
+    raise newException(ValueError, "Cannot create the GDI backing bitmap")
+  let previous = SelectObject(nextDC, cast[HGDIOBJ](nextBitmap))
+  var area = WINAPIRECT(left: 0, top: 0, right: width.int32, bottom: height.int32)
+  let brush = CreateSolidBrush(0)
+  discard FillRectGdi(nextDC, addr area, brush)
+  discard DeleteObject(cast[HGDIOBJ](brush))
+  if siwinSurfaceOwned:
+    discard BitBlt(nextDC, 0, 0, min(width.int32, gWidth), min(height.int32, gHeight),
+      gBackDC, 0, 0, SRCCOPY)
+    detachSiwinSurface()
+  gBackDC = nextDC
+  gBackBmp = nextBitmap
+  gOldBmp = previous
+  gWidth = width.int32
+  gHeight = height.int32
+  siwinSurfaceOwned = true
+
+proc presentSiwinSurface*(dc: pointer): bool =
+  gBackDC != nil and dc != nil and BitBlt(cast[HDC](dc), 0, 0, gWidth, gHeight,
+    gBackDC, 0, 0, SRCCOPY) != 0

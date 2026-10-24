@@ -38,34 +38,52 @@ Backend selection:
 - Default on macOS: Cocoa
 - Default on Linux/BSD: X11
 - Optional overrides: `-d:gtk4`, `-d:sdl3`, `-d:sdl2`
-- Optional features: `figDrawWindy` and `figDrawSiwin`
+- Optional features: `siwin`, `figDrawWindy`, and `figDrawSiwin`
 
-### FigDraw backend
+### Siwin windows with native drawing
 
-Choose either the Windy or siwin integration. The features are mutually
-exclusive and install only the selected windowing dependency:
+The `siwin` feature uses Siwin's software windows and event loop, with native
+Core Graphics, GDI, or Xft/XRender drawing. It does not create a FigDraw GPU
+renderer. Unix sessions use X11, including XWayland on Wayland desktops.
+
+```sh
+atlas install --feature:uirelays.siwin
+nim c -d:features.uirelays.siwin examples/hello.nim
+```
+
+The existing `features.uirelays.figDrawSiwin` and `figDrawSiwin` flags also
+select native Siwin drawing. The old feature still installs FigDraw for
+compatibility; the `siwin` feature only needs Siwin.
+
+The Siwin driver uses Siwin's blocking global event loop for
+`waitEvent`, while `pollEvent` remains nonblocking. Presenting a frame with
+`refresh()` does not request another application repaint. Native expose and
+resize events still request redraws. A persistent native drawing surface
+preserves contents across presentation and resize. This driver requires
+Siwin 1.1.2 or newer.
+
+To run the real-window alpha, presentation, and resize regression test:
+
+```sh
+nim r tests/siwinnativetest.nim
+# Linux: xvfb-run -a nim r tests/siwinnativetest.nim
+```
+
+### Optional FigDraw GPU backends
+
+The Windy integration and the explicit legacy Siwin GPU adapter use FigDraw
+for GPU presentation. They are separate from native Siwin drawing:
 
 ```sh
 atlas install --feature:uirelays.figDrawWindy
-nim c --define:"features.uirelays.figDrawWindy" examples/hello.nim
+nim c -d:features.uirelays.figDrawWindy examples/hello.nim
 
 atlas install --feature:uirelays.figDrawSiwin
-nim c --define:"features.uirelays.figDrawSiwin" examples/hello.nim
+nim c -d:features.uirelays.figDrawSiwinGpu examples/hello.nim
 ```
 
-The matching `-d:figDrawWindy` and `-d:figDrawSiwin` convenience aliases are
-also accepted once their dependencies are available.
-
-The FigDraw + siwin driver uses Siwin's blocking global event loop for
-`waitEvent`, while `pollEvent` remains nonblocking. Presenting a frame with
-`refresh()` does not request another application repaint. Native expose and
-resize events still request redraws. Animated RGBA draws reuse their atlas
-slots; unchanged pictures do not upload again.
-
-This optional FigDraw driver uses GPU presentation. The default Cocoa,
-WinAPI, and X11 drivers use the platform drawing APIs. The siwin driver
-requires Siwin 1.1.2 or newer for its global `pollEvents`/`waitEvents` and
-`serviceWindow` APIs.
+The default Cocoa, WinAPI, and X11 drivers use platform drawing APIs as well.
+Windy and Siwin selections are mutually exclusive.
 
 ### Nim Packages For SDL Backends
 

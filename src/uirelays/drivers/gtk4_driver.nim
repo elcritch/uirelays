@@ -11,6 +11,9 @@
 {.emit: """
 #include <gtk/gtk.h>
 #include <gdk/gdk.h>
+#ifdef GDK_WINDOWING_X11
+#include <gdk/x11/gdkx.h>
+#endif
 #include <cairo.h>
 #include <pango/pangocairo.h>
 #include <pango/pangofc-fontmap.h>
@@ -19,6 +22,12 @@
 
 static inline FcPattern *nimedit_fc_font_match(FcPattern *p, void *result_out) {
   return FcFontMatch(NULL, p, (FcResult *)result_out);
+}
+
+static inline void nimedit_set_program_class(GdkDisplay *display, const char *name) {
+#ifdef GDK_WINDOWING_X11
+  gdk_x11_display_set_program_class(display, name);
+#endif
 }
 """.}
 
@@ -154,7 +163,8 @@ proc gtk_im_context_focus_in(im: pointer) {.importc, nodecl, cdecl.}
 proc gdk_event_get_modifier_state(ev: pointer): guint {.importc, nodecl, cdecl.}
 proc gdk_keyval_to_lower(k: guint): guint {.importc, nodecl, cdecl.}
 proc gdk_cursor_new_from_name(name: cstring; fallback: pointer): pointer {.importc, nodecl, cdecl.}
-proc gdk_x11_display_set_program_class(disp: pointer; name: cstring) {.importc, nodecl, cdecl.}
+proc gdk_x11_display_set_program_class(disp: pointer; name: cstring)
+  {.importc: "nimedit_set_program_class", nodecl, cdecl.}
 proc gdk_display_get_default(): pointer {.importc, nodecl, cdecl.}
 proc gdk_display_get_clipboard(disp: pointer): pointer {.importc, nodecl, cdecl.}
 proc gdk_clipboard_set_text(clip: pointer; text: cstring) {.importc, nodecl, cdecl.}
@@ -616,8 +626,12 @@ proc gtkRefresh() =
   if drawingArea != nil:
     gtk_widget_queue_draw(drawingArea)
 
-proc gtkSaveState() = discard
-proc gtkRestoreState() = discard
+proc gtkSaveState() =
+  ensureBackingCr()
+  if backingCr != nil: cairo_save(backingCr)
+
+proc gtkRestoreState() =
+  if backingCr != nil: cairo_restore(backingCr)
 
 proc gtkSetClipRect(r: coords.Rect) =
   ensureBackingCr()

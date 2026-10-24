@@ -47,6 +47,7 @@ when defined(features.uirelays.figDrawWindy):
 when defined(features.uirelays.figDrawSiwin):
   execBackend("--define:\"features.uirelays.figDrawSiwin\"")
 when defined(linux):
+  exec "nim c -r tests/gtkstatetest.nim"
   execBackend("-d:gtk4")
 # execBackend("-d:sdl2")
 # execBackend("-d:sdl3")

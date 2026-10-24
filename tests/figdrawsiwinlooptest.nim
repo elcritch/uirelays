@@ -260,16 +260,28 @@ when defined(uirelaysSiwinWindowTests):
         discard
       figFillRect(coords.rect(0, 0, layout.width, layout.height), color(40, 80, 120))
       figRefresh()
-      while figPollEvent(event, {}):
-        check event.kind != input.NoEvent
-      check not figWaitEvent(event, 40, {})
+      # Service our own presentation without pumping unrelated native events.
+      # Focus/expose activity may legitimately arrive after window creation;
+      # requiring a quiet timed wait would confuse that with redraw feedback.
+      let queuedBeforePresentation = eventQueue.len
+      check presentationPending
+      appWindow.serviceWindow()
+      check not presentationPending
+      check eventQueue.len == queuedBeforePresentation
 
-      appWindow.size = ivec2(640, 480)
+      let beforeResize = figGetWindowLayout()
+      let requestedSize = ivec2(640, 480)
+      appWindow.size = requestedSize
       var resized = false
       let deadline = getMonoTime() + initDuration(seconds = 1)
       while not resized and getMonoTime() < deadline:
         if figWaitEvent(event, 100, {}):
-          resized = event.kind == WindowMetricsEvent
+          let current = figGetWindowLayout()
+          resized =
+            event.kind == WindowMetricsEvent and (
+              current.width != beforeResize.width or
+              current.height != beforeResize.height
+            ) and event.x == current.width and event.y == current.height
       check resized
       let afterResize = figGetWindowLayout()
       check event.x == afterResize.width

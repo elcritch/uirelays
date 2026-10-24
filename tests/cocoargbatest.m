@@ -46,6 +46,11 @@ int main(void) {
     assert(backing[0] == 0xff80007f);
     assert(backing[1] == 0xff0000ff);
     assert(alpha[0] == 0x80800000 && alpha[1] == 0x00000000);
+    cocoa_fillRect(0, 0, 2, 1, 0, 0, 255, 255);
+    cocoa_fillRect(0, 0, 1, 1, 255, 0, 0, 128);
+    assert(backing[0] == 0xff80007f && backing[1] == 0xff0000ff);
+    cocoa_fillRect(0, 0, 1, 1, 0, 255, 0, 0);
+    assert(backing[0] == 0xff80007f);
 
     /* A clipped blit keeps the original row stride, without scaling. */
     ensureBacking(2, 2, 1.0);

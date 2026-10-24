@@ -950,6 +950,17 @@ proc winGetFontMetrics(f: screen.Font): FontMetrics =
   else: screen.FontMetrics()
 
 proc winFillRect(r: coords.Rect; color: screen.Color) =
+  if r.w <= 0 or r.h <= 0 or color.a == 0: return
+  if color.a < 255:
+    let a = color.a.uint32
+    var pixel = (a shl 24) or
+      (((color.r.uint32 * a + 127) div 255) shl 16) or
+      (((color.g.uint32 * a + 127) div 255) shl 8) or
+      ((color.b.uint32 * a + 127) div 255)
+    if not winDrawRGBA(cast[ptr UncheckedArray[uint32]](addr pixel),
+        1, 1, r, RGBAFormat.argbPremultiplied):
+      raise newException(ValueError, "Cannot blend a native GDI rectangle")
+    return
   let brush = CreateSolidBrush(rgb(color))
   var wr = WINAPIRECT(
     left: r.x.int32, top: r.y.int32,

@@ -61,6 +61,21 @@ proc clear() =
 proc main() =
   prepare()
   clear()
+  screen.fillRect(coords.rect(0, 0, 3, 2), screen.color(255, 0, 0, 128))
+  doAssert pixel(0, 0) == 0x80007f
+  doAssert pixel(2, 1) == 0x80007f
+  doAssert pixel(3, 0) == 0x0000ff
+  screen.fillRect(coords.rect(0, 0, 3, 2), screen.color(0, 255, 0, 0))
+  doAssert pixel(0, 0) == 0x80007f
+  clear()
+  screen.saveState()
+  screen.setClipRect(coords.rect(1, 0, 1, 1))
+  screen.fillRect(coords.rect(0, 0, 3, 2), screen.color(255, 0, 0, 128))
+  screen.restoreState()
+  doAssert pixel(0, 0) == 0x0000ff
+  doAssert pixel(1, 0) == 0x80007f
+  doAssert pixel(1, 1) == 0x0000ff
+  clear()
   var pixels = [0x80800000'u32, 0x00000000'u32, 0x80008000'u32, 0xffffffff'u32]
   let data = cast[ptr UncheckedArray[uint32]](addr pixels[0])
   doAssert screen.drawRGBA(

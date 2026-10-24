@@ -614,6 +614,9 @@ proc XRenderFreePicture(display: pointer; picture: XID)
 proc XRenderComposite(display: pointer; operation: cint; source, mask, dest: XID;
     sx, sy, mx, my, dx, dy: cint; width, height: cuint)
   {.cdecl, dynlib: "libXrender.so(|.1)", importc.}
+proc XRenderFillRectangle(display: pointer; operation: cint; dest: XID;
+    color: ptr XRenderColor; x, y: cint; width, height: cuint)
+  {.cdecl, dynlib: "libXrender.so(|.1)", importc.}
 proc XRenderSetPictureClipRectangles(display: pointer; picture: XID;
     x, y: cint; rectangles: ptr XRectangle; count: cint)
   {.cdecl, dynlib: "libXrender.so(|.1)", importc.}
@@ -1378,10 +1381,30 @@ proc x11GetFontMetrics(f: screen.Font): FontMetrics =
   else: screen.FontMetrics()
 
 proc x11FillRect(r: coords.Rect; color: screen.Color) =
+  if r.w <= 0 or r.h <= 0 or color.a == 0: return
   mixFrame(4); mixFrame(r.x); mixFrame(r.y); mixFrame(r.w); mixFrame(r.h)
   mixFrame(color)
   var c = toXftColor(color)
-  XftDrawRect(gXftDraw, addr c, r.x.cint, r.y.cint, r.w.cuint, r.h.cuint)
+  # XRender's source channels are premultiplied, including solid Xft fills.
+  let alpha = color.a.uint32
+  c.color.red = ((c.color.red.uint32 * alpha + 127) div 255).cushort
+  c.color.green = ((c.color.green.uint32 * alpha + 127) div 255).cushort
+  c.color.blue = ((c.color.blue.uint32 * alpha + 127) div 255).cushort
+  if color.a < 255:
+    # XftDrawRect replaces destination pixels; translucent fills need Over.
+    let format = XRenderFindVisualFormat(gDisplay, gVisual)
+    if format == nil:
+      raise newException(ValueError, "Cannot find the XRender destination format")
+    let dest = XRenderCreatePicture(gDisplay, gBackPixmap, format, 0, nil)
+    if dest == None:
+      raise newException(ValueError, "Cannot create the XRender destination")
+    defer: XRenderFreePicture(gDisplay, dest)
+    if rgbaClipActive:
+      XRenderSetPictureClipRectangles(gDisplay, dest, 0, 0, addr rgbaClip, 1)
+    XRenderFillRectangle(gDisplay, 3, dest, addr c.color,
+      r.x.cint, r.y.cint, r.w.cuint, r.h.cuint)
+  else:
+    XftDrawRect(gXftDraw, addr c, r.x.cint, r.y.cint, r.w.cuint, r.h.cuint)
 
 proc x11DrawLine(x1, y1, x2, y2: int; color: screen.Color) =
   mixFrame(5); mixFrame(x1); mixFrame(y1); mixFrame(x2); mixFrame(y2)

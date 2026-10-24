@@ -201,6 +201,52 @@ suite "Siwin relay animated pixel uploads":
     check ctx.puts == 2
     check ctx.table.len == 1
 
+suite "Siwin RGBA format integration":
+  setup:
+    drawOps.setLen(0)
+    pixelUploadSlots.setLen(0)
+    currentState = DrawState()
+    let ctx = TestContext()
+  teardown:
+    drawOps.setLen(0)
+
+  test "format changes update the reusable slot and retain premultiplied channels":
+    var pixels = [0x80800000'u32]
+    let data = cast[ptr UncheckedArray[uint32]](addr pixels[0])
+    check figDrawRGBA(data, 1, 1, coords.rect(0, 0, 1, 1), RGBAFormat.rgbOpaque)
+    let opaque = drawOps.pop()
+    check opaque.pixels.data[0] == rgbx(128, 0, 0, 255)
+    check figDrawRGBA(data, 1, 1, coords.rect(0, 0, 1, 1), RGBAFormat.argbPremultiplied)
+    let alpha = drawOps.pop()
+    check alpha.pixels.data[0] == rgbx(128, 0, 0, 128)
+    check alpha.pixelsKey != opaque.pixelsKey
+    pixels[0] = 0
+    check alpha.pixels.data[0] == rgbx(128, 0, 0, 128)
+    ctx.replayPixels(opaque, 0)
+    ctx.replayPixels(alpha, 0)
+    ctx.replayPixels(alpha, 0)
+    check ctx.puts == 1
+    check ctx.updates == 1
+    check ctx.table.len == 1
+
+  test "alpha blits clip source rows while alpha draws keep the entire image":
+    var pixels = [
+      0x80800000'u32, 0x80008000'u32, 0x80000080'u32, 0x80008080'u32, 0x80808000'u32,
+      0x80800080'u32,
+    ]
+    let data = cast[ptr UncheckedArray[uint32]](addr pixels[0])
+    check figBlitRGBA(data, 3, 2, coords.rect(5, 6, 1, 2), RGBAFormat.argbPremultiplied)
+    let clipped = drawOps.pop()
+    check clipped.pixels.width == 1
+    check clipped.pixels.height == 2
+    check clipped.pixels.data == @[rgbx(128, 0, 0, 128), rgbx(0, 128, 128, 128)]
+    check figDrawRGBA(data, 3, 2, coords.rect(5, 6, 1, 2), RGBAFormat.argbPremultiplied)
+    let scaled = drawOps.pop()
+    check scaled.pixels.width == 3
+    check scaled.pixels.height == 2
+    check scaled.pixels.data[5] == rgbx(128, 0, 128, 128)
+    check scaled.pixelsDst == coords.rect(5, 6, 1, 2)
+
 when defined(uirelaysSiwinWindowTests):
   suite "Siwin relay native window":
     test "presentation does not feed repaint events and resize still invalidates":

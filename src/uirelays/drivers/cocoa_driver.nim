@@ -23,6 +23,12 @@ typedef struct {
 
 import ../coords, ../input, ../screen
 
+proc prepareSiwinSurface*(width, height: cint; scale: cdouble): cint
+  {.importc: "cocoa_prepareSiwinSurface", cdecl.}
+proc presentSiwinSurface*(pixels: pointer; width, height: cint): cint
+  {.importc: "cocoa_presentSiwinSurface", cdecl.}
+proc detachSiwinSurface*() {.importc: "cocoa_detachSurface", cdecl.}
+
 # --- C bindings to cocoa_backend.m ---
 # All procs use {.importc.} with explicit C names to avoid Nim's
 # identifier normalisation colliding with the Nim wrapper procs.
@@ -89,9 +95,9 @@ proc cDrawImage(handle, srcX, srcY, srcW, srcH, dstX, dstY, dstW, dstH: cint)
 proc cFreeImage(handle: cint) {.importc: "cocoa_freeImage", cdecl.}
 proc cImageSize(handle: cint; outW, outH: ptr cint)
   {.importc: "cocoa_imageSize", cdecl.}
-proc cBlitRGBA(pixels: pointer; w, h, dstX, dstY, dstW, dstH: cint): cint
+proc cBlitRGBA(pixels: pointer; w, h, dstX, dstY, dstW, dstH, format: cint): cint
   {.importc: "cocoa_blitRGBA", cdecl.}
-proc cDrawRGBA(pixels: pointer; w, h, dstX, dstY, dstW, dstH: cint): cint
+proc cDrawRGBA(pixels: pointer; w, h, dstX, dstY, dstW, dstH, format: cint): cint
   {.importc: "cocoa_drawRGBA", cdecl.}
 
 proc cSetClipRect(x, y, w, h: cint) {.importc: "cocoa_setClipRect", cdecl.}
@@ -160,16 +166,16 @@ proc cocoaImageSize(img: Image): tuple[w, h: int] =
   (w.int, h.int)
 
 proc cocoaBlitRGBA(pixels: ptr UncheckedArray[uint32]; w, h: int;
-                   dst: Rect): bool =
+                   dst: Rect; format: RGBAFormat): bool =
   if pixels == nil: return false
   cBlitRGBA(cast[pointer](pixels), w.cint, h.cint,
-            dst.x.cint, dst.y.cint, dst.w.cint, dst.h.cint) != 0
+            dst.x.cint, dst.y.cint, dst.w.cint, dst.h.cint, format.ord.cint) != 0
 
 proc cocoaDrawRGBA(pixels: ptr UncheckedArray[uint32]; w, h: int;
-                   dst: Rect): bool =
+                   dst: Rect; format: RGBAFormat): bool =
   if pixels == nil: return false
   cDrawRGBA(cast[pointer](pixels), w.cint, h.cint,
-            dst.x.cint, dst.y.cint, dst.w.cint, dst.h.cint) != 0
+            dst.x.cint, dst.y.cint, dst.w.cint, dst.h.cint, format.ord.cint) != 0
 
 proc cocoaOpenFont(path: string; size: int; style: FontStyles;
                    metrics: var FontMetrics): Font =

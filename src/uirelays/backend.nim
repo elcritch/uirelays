@@ -4,22 +4,33 @@
 ##
 ## Override flags (checked first):
 ##   --define:"features.uirelays.figDrawWindy" Force FigDraw + Windy backend
-##   --define:"features.uirelays.figDrawSiwin" Force FigDraw + siwin backend
+##   --define:"features.uirelays.siwin" Siwin windows with native drawing
+##   --define:"features.uirelays.figDrawSiwin" Legacy alias for native Siwin
+##   --define:"features.uirelays.figDrawSiwinGpu" Explicit legacy GPU adapter
 ##   -d:sdl3    Force SDL3 backend
 ##   -d:sdl2    Force SDL2 backend
 ##   -d:gtk4    Force GTK4 backend
 
+const NativeSiwin = defined(features.uirelays.siwin) or
+  defined(features.uirelays.figDrawSiwin) or defined(figDrawSiwin)
+
 when (defined(features.uirelays.figDrawWindy) or defined(figDrawWindy)) and
-    (defined(features.uirelays.figDrawSiwin) or defined(figDrawSiwin)):
-  {.error: "figDrawWindy and figDrawSiwin are mutually exclusive".}
+    (NativeSiwin or defined(features.uirelays.figDrawSiwinGpu)):
+  {.error: "Windy and Siwin drivers are mutually exclusive".}
+elif NativeSiwin and defined(features.uirelays.figDrawSiwinGpu):
+  {.error: "Native and GPU Siwin drivers are mutually exclusive".}
 
 elif defined(features.uirelays.figDrawWindy) or defined(figDrawWindy):
   import drivers/figdraw_windy_driver
   proc initBackend*() = initFigDrawWindyDriver()
 
-elif defined(features.uirelays.figDrawSiwin) or defined(figDrawSiwin):
+elif defined(features.uirelays.figDrawSiwinGpu):
   import drivers/figdraw_siwin_driver
   proc initBackend*() = initFigDrawSiwinDriver()
+
+elif NativeSiwin:
+  import drivers/siwin_driver
+  proc initBackend*() = initSiwinDriver()
 
 elif defined(sdl3):
   import drivers/sdl3_driver

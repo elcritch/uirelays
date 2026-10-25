@@ -600,6 +600,31 @@ var
 
 var eventQueue: seq[input.Event]
 
+type XRenderPictFormat = ptr object
+
+proc XRenderFindStandardFormat(display: pointer; format: cint): XRenderPictFormat
+  {.cdecl, dynlib: "libXrender.so(|.1)", importc.}
+proc XRenderFindVisualFormat(display, visual: pointer): XRenderPictFormat
+  {.cdecl, dynlib: "libXrender.so(|.1)", importc.}
+proc XRenderCreatePicture(display: pointer; drawable: XID;
+    format: XRenderPictFormat; mask: culong; attributes: pointer): XID
+  {.cdecl, dynlib: "libXrender.so(|.1)", importc.}
+proc XRenderFreePicture(display: pointer; picture: XID)
+  {.cdecl, dynlib: "libXrender.so(|.1)", importc.}
+proc XRenderComposite(display: pointer; operation: cint; source, mask, dest: XID;
+    sx, sy, mx, my, dx, dy: cint; width, height: cuint)
+  {.cdecl, dynlib: "libXrender.so(|.1)", importc.}
+proc XRenderFillRectangle(display: pointer; operation: cint; dest: XID;
+    color: ptr XRenderColor; x, y: cint; width, height: cuint)
+  {.cdecl, dynlib: "libXrender.so(|.1)", importc.}
+proc XRenderSetPictureClipRectangles(display: pointer; picture: XID;
+    x, y: cint; rectangles: ptr XRectangle; count: cint)
+  {.cdecl, dynlib: "libXrender.so(|.1)", importc.}
+
+var
+  rgbaClipActive: bool
+  rgbaClip: XRectangle
+
 proc pushEvent(e: input.Event) =
   # Pointer motion is coalesced: X11 sends one event per hardware sample --
   # a thousand a second with the mice that report that fast -- and a host that
@@ -1231,6 +1256,7 @@ proc x11Refresh() =
 
 proc x11SaveState() = discard
 proc x11RestoreState() =
+  rgbaClipActive = false
   # Reset clip on both GC and XftDraw
   mixFrame(1)
   discard XSetClipMask(gDisplay, gGC, None)
@@ -1241,6 +1267,8 @@ proc x11SetClipRect(r: coords.Rect) =
   var xr = XRectangle(
     x: r.x.cshort, y: r.y.cshort,
     width: r.w.cushort, height: r.h.cushort)
+  rgbaClipActive = true
+  rgbaClip = xr
   discard XSetClipRectangles(gDisplay, gGC, 0, 0, addr xr, 1, 0)
   discard XftDrawSetClipRectangles(gXftDraw, 0, 0, addr xr, 1)
 
@@ -1353,10 +1381,30 @@ proc x11GetFontMetrics(f: screen.Font): FontMetrics =
   else: screen.FontMetrics()
 
 proc x11FillRect(r: coords.Rect; color: screen.Color) =
+  if r.w <= 0 or r.h <= 0 or color.a == 0: return
   mixFrame(4); mixFrame(r.x); mixFrame(r.y); mixFrame(r.w); mixFrame(r.h)
   mixFrame(color)
   var c = toXftColor(color)
-  XftDrawRect(gXftDraw, addr c, r.x.cint, r.y.cint, r.w.cuint, r.h.cuint)
+  # XRender's source channels are premultiplied, including solid Xft fills.
+  let alpha = color.a.uint32
+  c.color.red = ((c.color.red.uint32 * alpha + 127) div 255).cushort
+  c.color.green = ((c.color.green.uint32 * alpha + 127) div 255).cushort
+  c.color.blue = ((c.color.blue.uint32 * alpha + 127) div 255).cushort
+  if color.a < 255:
+    # XftDrawRect replaces destination pixels; translucent fills need Over.
+    let format = XRenderFindVisualFormat(gDisplay, gVisual)
+    if format == nil:
+      raise newException(ValueError, "Cannot find the XRender destination format")
+    let dest = XRenderCreatePicture(gDisplay, gBackPixmap, format, 0, nil)
+    if dest == None:
+      raise newException(ValueError, "Cannot create the XRender destination")
+    defer: XRenderFreePicture(gDisplay, dest)
+    if rgbaClipActive:
+      XRenderSetPictureClipRectangles(gDisplay, dest, 0, 0, addr rgbaClip, 1)
+    XRenderFillRectangle(gDisplay, 3, dest, addr c.color,
+      r.x.cint, r.y.cint, r.w.cuint, r.h.cuint)
+  else:
+    XftDrawRect(gXftDraw, addr c, r.x.cint, r.y.cint, r.w.cuint, r.h.cuint)
 
 proc x11DrawLine(x1, y1, x2, y2: int; color: screen.Color) =
   mixFrame(5); mixFrame(x1); mixFrame(y1); mixFrame(x2); mixFrame(y2)
@@ -1378,8 +1426,54 @@ var gBlitVerdict = 0
   ## the program runs, so the answer is worth keeping rather than building a
   ## throwaway XImage every frame to hear it again.
 
+proc x11BlendRGBA(pixels: ptr UncheckedArray[uint32]; w, h: int;
+                  dst: coords.Rect): bool =
+  if gDisplay == nil or gBackPixmap == None: return false
+  if w > 65535 or h > 65535: return false # X11 pixmap dimensions are CARD16.
+  let sourceFormat = XRenderFindStandardFormat(gDisplay, 0) # PictStandardARGB32
+  let destFormat = XRenderFindVisualFormat(gDisplay, gVisual)
+  if sourceFormat == nil or destFormat == nil: return false
+  let pixmap = XCreatePixmap(gDisplay, gWindow, w.cuint, h.cuint, 32)
+  if pixmap == None: return false
+  defer: discard XFreePixmap(gDisplay, pixmap)
+  let gc = XCreateGC(gDisplay, pixmap, 0, nil)
+  if gc == nil: return false
+  defer: discard XFreeGC(gDisplay, gc)
+  let image = XCreateImage(gDisplay, gVisual, 32, ZPixmap, 0,
+    cast[pointer](pixels), w.cuint, h.cuint, 32, (w * 4).cint)
+  if image == nil: return false
+  defer:
+    image.data = nil
+    discard XFree(cast[pointer](image))
+  when cpuEndian == littleEndian:
+    let hostOrder = LSBFirst
+  else:
+    let hostOrder = MSBFirst
+  if image.bitsPerPixel != 32 or image.byteOrder != hostOrder:
+    return false
+  discard XPutImage(gDisplay, pixmap, gc, image, 0, 0, 0, 0, w.cuint, h.cuint)
+  let source = XRenderCreatePicture(gDisplay, pixmap, sourceFormat, 0, nil)
+  if source == None: return false
+  defer: XRenderFreePicture(gDisplay, source)
+  let dest = XRenderCreatePicture(gDisplay, gBackPixmap, destFormat, 0, nil)
+  if dest == None: return false
+  defer: XRenderFreePicture(gDisplay, dest)
+  if rgbaClipActive:
+    XRenderSetPictureClipRectangles(gDisplay, dest, 0, 0, addr rgbaClip, 1)
+  let cw = min(w, dst.w)
+  let ch = min(h, dst.h)
+  mixFrame(8); mixFrame(dst.x); mixFrame(dst.y)
+  mixFrame(w); mixFrame(h); mixFrame(cw); mixFrame(ch)
+  for i in 0 ..< w * h: mixFrame(pixels[i].uint64)
+  XRenderComposite(gDisplay, 3, source, None, dest, 0, 0, 0, 0,
+    dst.x.cint, dst.y.cint, cw.cuint, ch.cuint) # PictOpOver
+  true
+
 proc x11BlitRGBA(pixels: ptr UncheckedArray[uint32]; w, h: int;
-                 dst: coords.Rect): bool =
+                 dst: coords.Rect; format: RGBAFormat): bool =
+  if pixels == nil or w <= 0 or h <= 0 or dst.w <= 0 or dst.h <= 0: return false
+  if format == RGBAFormat.argbPremultiplied:
+    return x11BlendRGBA(pixels, w, h, dst)
   if gDisplay == nil or gBackPixmap == None or gBlitVerdict < 0: return false
   if pixels == nil or w <= 0 or h <= 0 or dst.w <= 0 or dst.h <= 0: return false
 
@@ -1429,14 +1523,15 @@ proc x11BlitRGBA(pixels: ptr UncheckedArray[uint32]; w, h: int;
   result = true
 
 proc x11DrawRGBA(pixels: ptr UncheckedArray[uint32]; w, h: int;
-                 dst: coords.Rect): bool =
+                 dst: coords.Rect; format: RGBAFormat): bool =
   if pixels == nil or w <= 0 or h <= 0 or dst.w <= 0 or dst.h <= 0:
     return false
   if w == dst.w and h == dst.h:
-    return x11BlitRGBA(pixels, w, h, dst)
-  let resized = resizedRGBA(pixels, w, h, dst.w, dst.h)
+    return x11BlitRGBA(pixels, w, h, dst, format)
+  let resized = resizedRGBA(pixels, w, h, dst.w, dst.h,
+    preserveAlpha = format == RGBAFormat.argbPremultiplied)
   x11BlitRGBA(cast[ptr UncheckedArray[uint32]](unsafeAddr resized[0]),
-              dst.w, dst.h, dst)
+              dst.w, dst.h, dst, format)
 
 proc x11SetCursor(c: CursorKind) =
   let shape = case c
@@ -1577,3 +1672,56 @@ proc initX11Driver*() =
     shutdown: x11QuitRequest)
   clipboardRelays = ClipboardRelays(
     getText: x11GetClipboardText, putText: x11PutClipboardText)
+
+proc attachSiwinSurface*(display: pointer; window: uint64; width, height: int) =
+  ## Borrow Siwin's X11 connection/window, retaining native Xft/XRender drawing.
+  if gDisplay != display or gWindow != XID(window) or gGC == nil:
+    gDisplay = display
+    gWindow = XID(window)
+    gScreen = XDefaultScreen(display)
+    gVisual = XDefaultVisual(display, gScreen)
+    gColormap = XDefaultColormap(display, gScreen)
+    gDepth = XDefaultDepth(display, gScreen)
+    gGC = XCreateGC(display, gWindow, 0, nil)
+  if gWidth != width.cint or gHeight != height.cint or gBackPixmap == None:
+    let previousPixmap = gBackPixmap
+    let previousDraw = gXftDraw
+    let previousWidth = gWidth
+    let previousHeight = gHeight
+    gBackPixmap = None
+    gXftDraw = nil
+    gWidth = width.cint
+    gHeight = height.cint
+    recreateBackBuffer()
+    if previousPixmap != None:
+      let copyGC = XCreateGC(gDisplay, gBackPixmap, 0, nil)
+      discard XCopyArea(gDisplay, previousPixmap, gBackPixmap, copyGC, 0, 0,
+        min(previousWidth, gWidth).cuint, min(previousHeight, gHeight).cuint, 0, 0)
+      discard XFreeGC(gDisplay, copyGC)
+      XftDrawDestroy(previousDraw)
+      discard XFreePixmap(gDisplay, previousPixmap)
+
+proc presentSiwinSurface*() =
+  ## Repaint exposed areas even when the application's frame hash is unchanged.
+  if gDisplay != nil and gBackPixmap != None:
+    discard XCopyArea(gDisplay, gBackPixmap, gWindow, gGC, 0, 0,
+      gWidth.cuint, gHeight.cuint, 0, 0)
+    discard XFlush(gDisplay)
+
+proc detachSiwinSurface*() =
+  ## Release our drawing resources without closing Siwin's borrowed connection.
+  if gDisplay != nil:
+    for font in fonts.mitems:
+      if font.xftFont != nil: XftFontClose(gDisplay, font.xftFont)
+      font.xftFont = nil
+    if gXftDraw != nil: XftDrawDestroy(gXftDraw)
+    if gBackPixmap != None: discard XFreePixmap(gDisplay, gBackPixmap)
+    if gGC != nil: discard XFreeGC(gDisplay, gGC)
+  fonts.setLen(0)
+  gXftDraw = nil
+  gBackPixmap = None
+  gGC = nil
+  gDisplay = nil
+  gWindow = None
+  gWidth = 0
+  gHeight = 0

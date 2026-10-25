@@ -58,6 +58,7 @@ when defined(uirelaysWindowTests):
   # Opt in on a real desktop, or run the tester inside xvfb-run on Linux.
   exec "nim c -r tests/siwinnativetest.nim"
 when defined(linux):
+  exec "nim c -r tests/gtkstatetest.nim"
   execBackend("-d:gtk4")
 # execBackend("-d:sdl2")
 # execBackend("-d:sdl3")

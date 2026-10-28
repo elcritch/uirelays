@@ -829,6 +829,49 @@ proc fontDC(): HDC =
   if gTextDC == nil: gTextDC = CreateCompatibleDC(nil)
   result = gTextDC
 
+type FaceInfo = object
+  family: string     ## the name GDI selects the face by; "" if unknown
+  weight: int
+  italic: bool
+
+proc readFaceInfo(path: string): FaceInfo =
+  ## The GDI family name (`name` ID 1), weight and slant (`OS/2`) of the
+  ## first face in a TrueType/OpenType file or collection.
+  var data: string
+  try: data = readFile(path)
+  except IOError, OSError: return
+  proc u16(at: int): int =
+    if at + 2 > data.len: 0
+    else: (data[at].ord shl 8) or data[at+1].ord
+  proc u32(at: int): int = (u16(at) shl 16) or u16(at + 2)
+  var face = 0
+  if data.len >= 16 and data[0 ..< 4] == "ttcf": face = u32(12)
+  var nameAt, os2At = -1
+  for i in 0 ..< u16(face + 4):
+    let rec = face + 12 + i * 16
+    if rec + 16 > data.len: break
+    case data[rec ..< rec + 4]
+    of "name": nameAt = u32(rec + 8)
+    of "OS/2": os2At = u32(rec + 8)
+    else: discard
+  if os2At >= 0:
+    result.weight = u16(os2At + 4)
+    result.italic = (u16(os2At + 62) and 1) != 0
+  if nameAt < 0: return
+  let strings = nameAt + u16(nameAt + 4)
+  var best = -1
+  for i in 0 ..< u16(nameAt + 2):
+    let rec = nameAt + 6 + i * 12
+    # Windows Unicode BMP; the US English record is the one GDI matches.
+    if u16(rec) == 3 and u16(rec + 2) == 1 and u16(rec + 6) == 1:
+      if best < 0 or u16(rec + 4) == 0x409: best = rec
+  if best < 0: return
+  let start = strings + u16(best + 10)
+  var w = newSeq[Utf16Char](u16(best + 8) div 2)
+  for i in 0 ..< w.len: w[i] = Utf16Char(u16(start + 2 * i))
+  w.add Utf16Char(0)
+  result.family = $cast[WideCString](addr w[0])
+
 proc winOpenFont(path: string; size: int; style: FontStyles;
                  metrics: var FontMetrics): screen.Font =
   # Ensure the font file is available as a private resource (needed for
@@ -836,14 +879,19 @@ proc winOpenFont(path: string; size: int; style: FontStyles;
   let wpath = newWideCString(path)
   let FR_PRIVATE = 0x10'u32
   discard AddFontResourceExW(cast[ptr uint16](wpath[0].addr), FR_PRIVATE, nil)
+  let info = readFaceInfo(path)
 
   # Asked for outright, or -- for a path that names one face of a family --
-  # detected from the filename.
+  # read from the file, or detected from the filename.
   let lpath = path.toLowerAscii()
-  let isBold = FontStyle.bold in style or "bold" in lpath
-  let isItalic = FontStyle.italics in style or
-                 "italic" in lpath or "oblique" in lpath
-  let weight = if isBold: 700'i32 else: FW_NORMAL
+  let isBold = FontStyle.bold in style or
+               (info.weight == 0 and "bold" in lpath)
+  let isItalic = FontStyle.italics in style or info.italic or
+                 (info.family.len == 0 and
+                  ("italic" in lpath or "oblique" in lpath))
+  let weight = if isBold: 700'i32
+               elif info.weight > 0: info.weight.int32
+               else: FW_NORMAL
   let italic = if isItalic: 1'u32 else: 0'u32
   let FIXED_PITCH = 1'u32
 
@@ -852,7 +900,9 @@ proc winOpenFont(path: string; size: int; style: FontStyles;
   # ClearType hinting.
   var faceName = "Consolas"
   let baseName = path.extractFilename.toLowerAscii
-  if "dejavu" in baseName and "mono" in baseName:
+  if info.family.len > 0:
+    faceName = info.family
+  elif "dejavu" in baseName and "mono" in baseName:
     faceName = "DejaVu Sans Mono"
   elif "dejavu" in baseName:
     faceName = "DejaVu Sans"
@@ -1155,6 +1205,14 @@ proc setDpiAware() =
     discard SetProcessDPIAware()
   except: discard
 
+proc initWinapiFontRelays*() =
+  ## Only the fonts, for a renderer that draws in a window of its own and
+  ## takes text from `renderText`.
+  fontRelays = FontRelays(
+    openFont: winOpenFont, closeFont: winCloseFont,
+    getFontMetrics: winGetFontMetrics, measureText: winMeasureText,
+    drawText: winDrawText, renderText: winRenderText)
+
 proc initWinapiDriver*() =
   setDpiAware()
   windowRelays = WindowRelays(
@@ -1163,10 +1221,7 @@ proc initWinapiDriver*() =
     saveState: winSaveState, restoreState: winRestoreState,
     setClipRect: winSetClipRect, setCursor: winSetCursor,
     setWindowTitle: winSetWindowTitle)
-  fontRelays = FontRelays(
-    openFont: winOpenFont, closeFont: winCloseFont,
-    getFontMetrics: winGetFontMetrics, measureText: winMeasureText,
-    drawText: winDrawText, renderText: winRenderText)
+  initWinapiFontRelays()
   drawRelays = DrawRelays(
     fillRect: winFillRect, drawLine: winDrawLine, drawPoint: winDrawPoint,
     blitRGBA: winBlitRGBA, drawRGBA: winDrawRGBA)

@@ -1,10 +1,11 @@
 ## Text rendered into pixels of its own, by a driver that has no window: the
 ## way a GPU renderer with a window from elsewhere asks for its glyphs.
 when defined(windows):
+  import std/os
   import uirelays/screen
   import uirelays/drivers/winapi_driver
 
-  initWinapiDriver()
+  initWinapiFontRelays()
 
   var metrics = FontMetrics()
   let font = openFont("", 16, metrics)
@@ -34,4 +35,14 @@ when defined(windows):
   doAssert renderText(font, "", fg, pixels) == TextExtent()
   doAssert pixels.len == 0
   closeFont(font)
+
+  # The face a file holds is read from the file, not guessed from its name:
+  # "segoeuib.ttf" says nothing about being bold.
+  let fonts = getEnv("WINDIR", r"C:\Windows") / "Fonts"
+  if fileExists(fonts / "segoeui.ttf") and fileExists(fonts / "segoeuib.ttf"):
+    let regular = openFont(fonts / "segoeui.ttf", 32, metrics)
+    let bold = openFont(fonts / "segoeuib.ttf", 32, metrics)
+    doAssert measureText(bold, "Hello, world").w > measureText(regular, "Hello, world").w
+    closeFont(regular)
+    closeFont(bold)
   echo "rendertexttest: OK"

@@ -180,11 +180,6 @@ proc gdk_clipboard_read_text_finish(clip: pointer; res: pointer; err: ptr ptr GE
 
 proc cairo_create(surface: pointer): pointer {.importc, nodecl, cdecl.}
 proc cairo_destroy(cr: pointer) {.importc, nodecl, cdecl.}
-proc cairo_font_options_create(): pointer {.importc, nodecl, cdecl.}
-proc cairo_font_options_set_antialias(options: pointer; antialias: cint)
-  {.importc, nodecl, cdecl.}
-proc cairo_set_font_options(cr, options: pointer) {.importc, nodecl, cdecl.}
-proc cairo_font_options_destroy(options: pointer) {.importc, nodecl, cdecl.}
 proc cairo_surface_destroy(surf: pointer) {.importc, nodecl, cdecl.}
 proc cairo_surface_flush(surf: pointer) {.importc, nodecl, cdecl.}
 proc cairo_image_surface_create(fmt, w, h: gint): pointer {.importc, nodecl, cdecl.}

@@ -35,6 +35,20 @@ for p in pixels:
 doAssert inked > 0
 doAssert inked < pixels.len, "text is drawn on transparency"
 
+for foreground in [Color(r: 255, g: 255, b: 255, a: 255),
+                   Color(r: 200, g: 100, b: 50, a: 128)]:
+  doAssert renderText(font, "Hello, world", foreground, pixels) == measured
+  for p in pixels:
+    let a = p shr 24
+    doAssert a <= foreground.a.uint32
+    doAssert ((p shr 16) and 0xFF) <= a
+    doAssert ((p shr 8) and 0xFF) <= a
+    doAssert (p and 0xFF) <= a
+    if foreground.r == 255:
+      doAssert ((p shr 16) and 0xFF) == a
+      doAssert ((p shr 8) and 0xFF) == a
+      doAssert (p and 0xFF) == a
+
 doAssert renderText(font, "", fg, pixels) == TextExtent()
 doAssert pixels.len == 0
 closeFont(font)

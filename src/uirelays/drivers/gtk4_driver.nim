@@ -90,6 +90,7 @@ const
   GTK_EVENT_CONTROLLER_SCROLL_BOTH_AXES = 3
   FcMatchPattern = 0
   CAIRO_FORMAT_ARGB32 = 0 ## cairo_format_t; pixel buffer must be flushed before another cairo_t reads it
+  CAIRO_ANTIALIAS_GRAY = 2
   CAIRO_FORMAT_RGB24 = 1 ## cairo_format_t; 32 bits a pixel with the top byte unused -- the word `blitRGBA` hands over
 
 const
@@ -179,6 +180,11 @@ proc gdk_clipboard_read_text_finish(clip: pointer; res: pointer; err: ptr ptr GE
 
 proc cairo_create(surface: pointer): pointer {.importc, nodecl, cdecl.}
 proc cairo_destroy(cr: pointer) {.importc, nodecl, cdecl.}
+proc cairo_font_options_create(): pointer {.importc, nodecl, cdecl.}
+proc cairo_font_options_set_antialias(options: pointer; antialias: cint)
+  {.importc, nodecl, cdecl.}
+proc cairo_set_font_options(cr, options: pointer) {.importc, nodecl, cdecl.}
+proc cairo_font_options_destroy(options: pointer) {.importc, nodecl, cdecl.}
 proc cairo_surface_destroy(surf: pointer) {.importc, nodecl, cdecl.}
 proc cairo_surface_flush(surf: pointer) {.importc, nodecl, cdecl.}
 proc cairo_image_surface_create(fmt, w, h: gint): pointer {.importc, nodecl, cdecl.}
@@ -788,6 +794,12 @@ proc gtkRenderText(f: Font; text: string; fg: screen.Color;
   let surf = cairo_image_surface_create(gint(CAIRO_FORMAT_ARGB32),
     gint(size.w), gint(size.h))
   let cr = cairo_create(surf)
+  # Transparent text textures need a single coverage value per pixel.
+  # LCD component-alpha masks can produce RGB channels greater than alpha.
+  let options = cairo_font_options_create()
+  cairo_font_options_set_antialias(options, CAIRO_ANTIALIAS_GRAY)
+  cairo_set_font_options(cr, options)
+  cairo_font_options_destroy(options)
   let layout = pango_cairo_create_layout(cr)
   pango_layout_set_font_description(layout, desc)
   pango_layout_set_text(layout, cstring(text), -1)

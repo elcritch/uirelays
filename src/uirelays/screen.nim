@@ -94,7 +94,9 @@ type
       ## `pixels` becomes `w` * `h` argbPremultiplied pixels, top to bottom,
       ## for a renderer that keeps text in textures -- a GPU one draws no
       ## other way, and the window it draws in is not one this driver made.
-      ## Optional: nil, or a zero extent, where a driver cannot.
+      ## Every driver here provides it, and works without a window of its own
+      ## (X11 still needs a display). A driver that cannot leaves it nil, and
+      ## `screen.renderText` then answers with a zero extent.
 
   DrawRelays* = object
     fillRect*: proc (r: Rect; color: Color) {.nimcall.}

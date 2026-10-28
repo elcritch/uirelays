@@ -182,6 +182,8 @@ proc cairo_destroy(cr: pointer) {.importc, nodecl, cdecl.}
 proc cairo_surface_destroy(surf: pointer) {.importc, nodecl, cdecl.}
 proc cairo_surface_flush(surf: pointer) {.importc, nodecl, cdecl.}
 proc cairo_image_surface_create(fmt, w, h: gint): pointer {.importc, nodecl, cdecl.}
+proc cairo_image_surface_get_data(surf: pointer): pointer {.importc, nodecl, cdecl.}
+proc cairo_image_surface_get_stride(surf: pointer): gint {.importc, nodecl, cdecl.}
 proc cairo_image_surface_create_for_data(data: pointer; fmt, w, h, stride: gint):
   pointer {.importc, nodecl, cdecl.}
 proc cairo_save(cr: pointer) {.importc, nodecl, cdecl.}
@@ -705,14 +707,23 @@ proc gtkCloseFont(f: Font) =
     pango_font_description_free(fonts[idx].desc)
     fonts[idx].desc = nil
 
-proc gtkMeasureText(f: Font; text: string): TextExtent =
+var textSurf, textCr: pointer
+
+proc measuringCr(): pointer =
+  ## The back buffer once there is a window. Fonts are measured before one,
+  ## and without one by a renderer that draws in a window of its own.
   ensureBackingCr()
+  if backingCr != nil: return backingCr
+  if textCr == nil:
+    textSurf = cairo_image_surface_create(gint(CAIRO_FORMAT_ARGB32), 1, 1)
+    textCr = cairo_create(textSurf)
+  textCr
+
+proc gtkMeasureText(f: Font; text: string): TextExtent =
   let desc = getDesc(f)
   if desc == nil or text.len == 0:
     return TextExtent()
-  let cr = backingCr
-  if cr == nil:
-    return TextExtent()
+  let cr = measuringCr()
   let layout = pango_cairo_create_layout(cr)
   pango_layout_set_font_description(layout, desc)
   pango_layout_set_text(layout, cstring(text), -1)
@@ -762,6 +773,40 @@ proc gtkDrawMeasuredText(f: Font; x, y: int; text: string;
   if desc == nil or text.len == 0 or backingCr == nil:
     return
   paintText(desc, x, y, text, fg, bg, size)
+
+proc gtkRenderText(f: Font; text: string; fg: screen.Color;
+                   pixels: var seq[uint32]): TextExtent =
+  ## Pango draws the run into an ARGB32 surface of its own, which cairo keeps
+  ## premultiplied already -- the very pixels `renderText` hands out.
+  pixels.setLen 0
+  let desc = getDesc(f)
+  if desc == nil or text.len == 0:
+    return
+  let size = gtkMeasureText(f, text)
+  if size.w <= 0 or size.h <= 0:
+    return
+  let surf = cairo_image_surface_create(gint(CAIRO_FORMAT_ARGB32),
+    gint(size.w), gint(size.h))
+  let cr = cairo_create(surf)
+  let layout = pango_cairo_create_layout(cr)
+  pango_layout_set_font_description(layout, desc)
+  pango_layout_set_text(layout, cstring(text), -1)
+  cairo_set_source_rgba(cr,
+    gdouble(fg.r) / 255.0, gdouble(fg.g) / 255.0, gdouble(fg.b) / 255.0,
+    gdouble(fg.a) / 255.0)
+  cairo_move_to(cr, 0, 0)
+  pango_cairo_show_layout(cr, layout)
+  g_object_unref_layout(layout)
+  cairo_destroy(cr)
+  cairo_surface_flush(surf)
+  let data = cast[ptr UncheckedArray[uint8]](cairo_image_surface_get_data(surf))
+  let stride = cairo_image_surface_get_stride(surf).int
+  if data != nil:
+    pixels.setLen size.w * size.h
+    for y in 0 ..< size.h:
+      copyMem(addr pixels[y * size.w], addr data[y * stride], size.w * 4)
+    result = size
+  cairo_surface_destroy(surf)
 
 proc gtkGetFontMetrics(f: Font): FontMetrics =
   let idx = f.int - 1
@@ -925,7 +970,8 @@ proc initGtk4Driver*() =
   fontRelays = FontRelays(
     openFont: gtkOpenFont, closeFont: gtkCloseFont,
     getFontMetrics: gtkGetFontMetrics, measureText: gtkMeasureText,
-    drawText: gtkDrawText, drawMeasuredText: gtkDrawMeasuredText)
+    drawText: gtkDrawText, drawMeasuredText: gtkDrawMeasuredText,
+    renderText: gtkRenderText)
   drawRelays = DrawRelays(
     fillRect: gtkFillRect, drawLine: gtkDrawLine, drawPoint: gtkDrawPoint,
     blitRGBA: gtkBlitRGBA, drawRGBA: gtkDrawRGBA)

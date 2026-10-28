@@ -50,3 +50,23 @@ when defined(windows):
     closeFont(regular)
     closeFont(bold)
 echo "rendertexttest: OK"
+
+when defined(windows):
+  proc getCurrentProcess(): pointer {.stdcall, dynlib: "kernel32", importc: "GetCurrentProcess".}
+  proc getGuiResources(process: pointer, flags: uint32): uint32 {.stdcall, dynlib: "user32", importc: "GetGuiResources".}
+
+  # Font-only clients must leave the application's installed relays untouched.
+  let installed = fontRelays
+  let isolated = winapiFontRelays()
+  doAssert fontRelays.openFont == installed.openFont
+  let before = getGuiResources(getCurrentProcess(), 0)
+  for i in 0 ..< 100:
+    var metrics: FontMetrics
+    let font = isolated.openFont("", 12 + i mod 12, {}, metrics)
+    doAssert font.int != 0
+    doAssert isolated.measureText(font, "hello").w > 0
+    isolated.closeFont(font)
+  doAssert getGuiResources(getCurrentProcess(), 0) <= before + 1
+
+  var invalidMetrics: FontMetrics
+  doAssert isolated.openFontFace("", 1, 16, {}, invalidMetrics).int == 0

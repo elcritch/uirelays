@@ -87,6 +87,14 @@ type
       ## time to find how wide a background to fill. Optional, and a shortcut
       ## rather than a second way to draw -- a driver that leaves it nil is
       ## called through `drawText` and draws exactly what it drew before.
+    renderText*: proc (f: Font; text: string; fg: Color;
+                       pixels: var seq[uint32]): TextExtent {.nimcall.}
+      ## `drawText` into a picture of its own instead of the window: the run,
+      ## as the platform shapes and smooths it, in `fg` on transparency.
+      ## `pixels` becomes `w` * `h` argbPremultiplied pixels, top to bottom,
+      ## for a renderer that keeps text in textures -- a GPU one draws no
+      ## other way, and the window it draws in is not one this driver made.
+      ## Optional: nil, or a zero extent, where a driver cannot.
 
   DrawRelays* = object
     fillRect*: proc (r: Rect; color: Color) {.nimcall.}
@@ -304,6 +312,15 @@ proc drawText*(f: Font; x, y: int; text: string; fg, bg: Color;
     result = known
   else:
     result = fontRelays.drawText(f, x, y, text, fg, bg)
+
+proc renderText*(f: Font; text: string; fg: Color;
+                 pixels: var seq[uint32]): TextExtent =
+  ## See `FontRelays.renderText`. A zero extent and no pixels when the driver
+  ## has no such relay.
+  if fontRelays.renderText != nil:
+    result = fontRelays.renderText(f, text, fg, pixels)
+  else:
+    pixels.setLen 0
 
 proc fillRect*(r: Rect; color: Color) = drawRelays.fillRect(r, color)
 proc drawFrame*(r: Rect; color: Color; width = 1) =

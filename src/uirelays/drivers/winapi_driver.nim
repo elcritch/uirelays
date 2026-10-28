@@ -312,6 +312,8 @@ proc SetTextColor(hdc: HDC; color: COLORREF): COLORREF
   {.stdcall, dynlib: "gdi32", importc.}
 proc TextOutW(hdc: HDC; x, y: int32; lpString: ptr uint16; c: int32): BOOL
   {.stdcall, dynlib: "gdi32", importc.}
+proc GdiFlush(): BOOL
+  {.stdcall, dynlib: "gdi32", importc.}
 proc GetTextExtentPoint32W(hdc: HDC; lpString: ptr uint16; c: int32;
   lpSize: ptr SIZE): BOOL
   {.stdcall, dynlib: "gdi32", importc.}
@@ -395,6 +397,7 @@ var
   gBackDC: HDC        # off-screen DC for double buffering
   gBackBmp: HBITMAP   # off-screen bitmap
   gOldBmp: HGDIOBJ    # original bitmap selected into gBackDC
+  gTextDC: HDC        # for fonts used before, or without, a window
   gWidth, gHeight: int32
   gQuitFlag: bool
   gSavedClipRgn: HRGN
@@ -819,6 +822,13 @@ proc winDrawRGBA(pixels: ptr UncheckedArray[uint32]; w, h: int;
                  dst: coords.Rect; format: RGBAFormat): bool =
   winPutRGBA(pixels, w, h, dst, true, format)
 
+proc fontDC(): HDC =
+  ## The back buffer once there is a window. A renderer with a window of its
+  ## own never makes one here, and its fonts still need a DC to be measured.
+  if gBackDC != nil: return gBackDC
+  if gTextDC == nil: gTextDC = CreateCompatibleDC(nil)
+  result = gTextDC
+
 proc winOpenFont(path: string; size: int; style: FontStyles;
                  metrics: var FontMetrics): screen.Font =
   # Ensure the font file is available as a private resource (needed for
@@ -897,10 +907,11 @@ proc winOpenFont(path: string; size: int; style: FontStyles;
     return screen.Font(0)
 
   # Get font metrics
-  let oldFont = SelectObject(gBackDC, cast[HGDIOBJ](hf))
+  let dc = fontDC()
+  let oldFont = SelectObject(dc, cast[HGDIOBJ](hf))
   var tm: TEXTMETRICW
-  discard GetTextMetricsW(gBackDC, addr tm)
-  discard SelectObject(gBackDC, oldFont)
+  discard GetTextMetricsW(dc, addr tm)
+  discard SelectObject(dc, oldFont)
 
   metrics.ascent = tm.tmAscent.int
   metrics.descent = tm.tmDescent.int
@@ -918,12 +929,13 @@ proc winCloseFont(f: screen.Font) =
 proc winMeasureText(f: screen.Font; text: string): TextExtent =
   let hf = getFontHandle(f)
   if hf == nil or text.len == 0: return
-  let oldFont = SelectObject(gBackDC, cast[HGDIOBJ](hf))
+  let dc = fontDC()
+  let oldFont = SelectObject(dc, cast[HGDIOBJ](hf))
   let wtext = newWideCString(text)
   var sz: SIZE
-  discard GetTextExtentPoint32W(gBackDC, cast[ptr uint16](wtext[0].addr),
+  discard GetTextExtentPoint32W(dc, cast[ptr uint16](wtext[0].addr),
     wtext.len.int32, addr sz)
-  discard SelectObject(gBackDC, oldFont)
+  discard SelectObject(dc, oldFont)
   result = TextExtent(w: sz.cx.int, h: sz.cy.int)
 
 proc winDrawText(f: screen.Font; x, y: int; text: string;
@@ -942,6 +954,52 @@ proc winDrawText(f: screen.Font; x, y: int; text: string;
   discard GetTextExtentPoint32W(gBackDC, cast[ptr uint16](wtext[0].addr),
     wlen, addr sz)
   discard SelectObject(gBackDC, oldFont)
+  result = TextExtent(w: sz.cx.int, h: sz.cy.int)
+
+proc winRenderText(f: screen.Font; text: string; fg: screen.Color;
+                   pixels: var seq[uint32]): TextExtent =
+  pixels.setLen 0
+  let hf = getFontHandle(f)
+  if hf == nil or text.len == 0: return
+  let dc = CreateCompatibleDC(fontDC())
+  if dc == nil: return
+  defer: discard DeleteDC(dc)
+  let oldFont = SelectObject(dc, cast[HGDIOBJ](hf))
+  defer: discard SelectObject(dc, oldFont)
+  let wtext = newWideCString(text)
+  let wlen = wtext.len.int32
+  var sz: SIZE
+  discard GetTextExtentPoint32W(dc, cast[ptr uint16](wtext[0].addr), wlen, addr sz)
+  if sz.cx <= 0 or sz.cy <= 0: return
+  var bmi = BITMAPINFO()
+  bmi.bmiHeader.biSize = DWORD(sizeof(BITMAPINFOHEADER))
+  bmi.bmiHeader.biWidth = sz.cx
+  bmi.bmiHeader.biHeight = -sz.cy # top to bottom, as the pixels are handed out
+  bmi.bmiHeader.biPlanes = 1
+  bmi.bmiHeader.biBitCount = 32
+  bmi.bmiHeader.biCompression = BI_RGB
+  var data: pointer
+  let bitmap = CreateDIBSection(dc, addr bmi, DIB_RGB_COLORS, addr data, nil, 0)
+  if bitmap == nil: return
+  defer: discard DeleteObject(cast[HGDIOBJ](bitmap))
+  let oldBmp = SelectObject(dc, cast[HGDIOBJ](bitmap))
+  defer: discard SelectObject(dc, oldBmp)
+  # White on the black a new DIB starts as: what GDI writes is coverage, and
+  # coverage times `fg` is the premultiplied pixel. ClearType coverage differs
+  # per channel; its mean is the plain antialiased value.
+  discard SetBkMode(dc, TRANSPARENT)
+  discard SetTextColor(dc, rgb(screen.Color(r: 255, g: 255, b: 255, a: 255)))
+  discard TextOutW(dc, 0, 0, cast[ptr uint16](wtext[0].addr), wlen)
+  discard GdiFlush()
+  let n = sz.cx.int * sz.cy.int
+  let src = cast[ptr UncheckedArray[uint32]](data)
+  pixels.setLen n
+  for i in 0 ..< n:
+    let p = src[i]
+    let coverage = (((p shr 16) and 0xFF) + ((p shr 8) and 0xFF) + (p and 0xFF)) div 3
+    let a = coverage * fg.a.uint32 div 255
+    pixels[i] = (a shl 24) or ((fg.r.uint32 * a div 255) shl 16) or
+                ((fg.g.uint32 * a div 255) shl 8) or (fg.b.uint32 * a div 255)
   result = TextExtent(w: sz.cx.int, h: sz.cy.int)
 
 proc winGetFontMetrics(f: screen.Font): FontMetrics =
@@ -1108,7 +1166,7 @@ proc initWinapiDriver*() =
   fontRelays = FontRelays(
     openFont: winOpenFont, closeFont: winCloseFont,
     getFontMetrics: winGetFontMetrics, measureText: winMeasureText,
-    drawText: winDrawText)
+    drawText: winDrawText, renderText: winRenderText)
   drawRelays = DrawRelays(
     fillRect: winFillRect, drawLine: winDrawLine, drawPoint: winDrawPoint,
     blitRGBA: winBlitRGBA, drawRGBA: winDrawRGBA)

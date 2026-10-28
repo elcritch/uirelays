@@ -25,6 +25,7 @@ exec "nim c -r tests/layouttest.nim"
 exec "nim c -r tests/rgbatest.nim"
 when defined(windows):
   exec "nim c -r tests/nativealphatest.nim"
+  exec "nim c -r tests/rendertexttest.nim"
 elif defined(linux):
   if findExe("xvfb-run").len > 0:
     exec "xvfb-run -a nim c -r tests/nativealphatest.nim"
